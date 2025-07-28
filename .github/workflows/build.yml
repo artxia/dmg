@@ -46,7 +46,7 @@ jobs:
           rustup target add x86_64-apple-darwin
           npm run tauri build -- --target universal-apple-darwin
           mkdir -p output/macos
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{inputs.title}}".dmg
+          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{ github.ref_name }}".dmg
 
       - name: Rust cache store
         uses: actions/cache/save@v3
