@@ -6,14 +6,12 @@ on:
   workflow_dispatch:
     inputs:
 
-
 jobs:
   build:
     name: macos-latest
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        build: macos
         include:
           - build: macos
             os: macos-latest
