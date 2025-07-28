@@ -39,6 +39,9 @@ jobs:
             src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Build for macOS
         if: matrix.os == 'macos-latest'
         run: |
