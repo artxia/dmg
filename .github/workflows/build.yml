@@ -33,6 +33,15 @@ jobs:
         run: |
           cd Resources/mole
           make release-amd64
+          
+          # Rename binaries to match expected names in bin/analyze.sh and bin/status.sh
+          mv bin/analyze-darwin-amd64 bin/analyze-go
+          mv bin/status-darwin-amd64 bin/status-go
+          
+          # Verify binaries are in place
+          echo "=== Verifying compiled binaries ==="
+          ls -lah bin/analyze-go bin/status-go
+          file bin/analyze-go bin/status-go
 
       - name: Archive app
         run: |
@@ -59,11 +68,44 @@ jobs:
           MOLE_DIR="$APP/Contents/Resources/mole"
           mkdir -p "$MOLE_DIR"
 
-          # Copy from project Resources
+          # Copy entire mole directory from project Resources
+          # This includes: bin/, lib/, mole script, and all dependencies
           cp -R Resources/mole/* "$MOLE_DIR/"
 
           echo "Mole CLI bundled into app"
-          ls -la "$MOLE_DIR/"
+          
+          # Verify critical files are present
+          echo "=== Verifying bundled mole structure ==="
+          echo "Root files:"
+          ls -la "$MOLE_DIR/" | grep -E "^-" | head -5
+          
+          echo "Bin directory:"
+          ls -la "$MOLE_DIR/bin/"
+          
+          echo "Lib directory:"
+          ls -la "$MOLE_DIR/lib/" | head -5
+          
+          # Verify the binaries are executable
+          if [[ -x "$MOLE_DIR/bin/analyze-go" ]]; then
+            echo "✓ analyze-go is executable"
+          else
+            echo "✗ ERROR: analyze-go is not executable"
+            exit 1
+          fi
+          
+          if [[ -x "$MOLE_DIR/bin/status-go" ]]; then
+            echo "✓ status-go is executable"
+          else
+            echo "✗ ERROR: status-go is not executable"
+            exit 1
+          fi
+          
+          if [[ -x "$MOLE_DIR/mole" ]]; then
+            echo "✓ mole script is executable"
+          else
+            echo "✗ ERROR: mole script is not executable"
+            exit 1
+          fi
 
       - name: Create DMG
         run: |
