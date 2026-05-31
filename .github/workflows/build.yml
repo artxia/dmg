@@ -21,8 +21,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.21
+
       - name: Install dependencies
         run: brew install create-dmg mole
+
+      - name: Build Mole binaries
+        run: |
+          cd Resources/mole
+          make release-amd64
 
       - name: Archive app
         run: |
