@@ -20,26 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Import signing certificate
-        env:
-          CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -hex 12)
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          echo "$CERTIFICATE_P12" | base64 --decode > $RUNNER_TEMP/certificate.p12
-          security import $RUNNER_TEMP/certificate.p12 \
-            -P "$CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-
       - name: Build for macOS
         if: matrix.os == 'macos-latest'
         run: |
@@ -56,31 +36,6 @@ jobs:
           mkdir -p $RUNNER_TEMP/export
           cp -R "$RUNNER_TEMP/MoleUI.xcarchive/Products/Applications/Mole UI.app" \
             "$RUNNER_TEMP/export/Mole UI.app"
-
-      - name: Sign and notarize app
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-          TEAM_ID: ${{ secrets.TEAM_ID }}
-        run: |
-          SIGN_ID="Developer ID Application: Fuyao Qin (646VSJ9K5F)"
-          APP="$RUNNER_TEMP/export/Mole UI.app"
-          
-          codesign --force --timestamp --options runtime \
-            --entitlements MoleUI/MoleUI.entitlements \
-            --sign "$SIGN_ID" "$APP"
-          
-          xcrun notarytool store-credentials "notary-profile" \
-            --apple-id "$APPLE_ID" \
-            --password "$APP_PASSWORD" \
-            --team-id "$TEAM_ID"
-          
-          /usr/bin/ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/MoleUI.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/MoleUI.zip" \
-            --keychain-profile "notary-profile" \
-            --wait
-          
-          xcrc stapler staple "$APP"
 
       - name: Create DMG
         run: |
@@ -108,7 +63,3 @@ jobs:
           allowUpdates: true
           artifacts: 'output/*/*.*'
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup keychain
-        if: always()
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
