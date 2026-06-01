@@ -34,14 +34,16 @@ jobs:
           cd Resources/mole
           make release-amd64
           
-          # Rename binaries to match expected names in bin/analyze.sh and bin/status.sh
+          # Rename binaries to match expected names
           mv bin/analyze-darwin-amd64 bin/analyze-go
           mv bin/status-darwin-amd64 bin/status-go
           
-          # Verify binaries are in place
-          echo "=== Verifying compiled binaries ==="
-          ls -lah bin/analyze-go bin/status-go
+          # Verify binaries exist and are executable
+          echo "=== Verifying Go binaries ==="
           file bin/analyze-go bin/status-go
+          [[ -x bin/analyze-go ]] || exit 1
+          [[ -x bin/status-go ]] || exit 1
+          echo "✓ Both Go binaries compiled successfully"
 
       - name: Archive app
         run: |
@@ -68,44 +70,64 @@ jobs:
           MOLE_DIR="$APP/Contents/Resources/mole"
           mkdir -p "$MOLE_DIR"
 
-          # Copy entire mole directory from project Resources
-          # This includes: bin/, lib/, mole script, and all dependencies
+          # Copy entire mole directory structure
           cp -R Resources/mole/* "$MOLE_DIR/"
 
-          echo "Mole CLI bundled into app"
+          echo "=== Verifying bundled Mole structure ==="
           
-          # Verify critical files are present
-          echo "=== Verifying bundled mole structure ==="
-          echo "Root files:"
-          ls -la "$MOLE_DIR/" | grep -E "^-" | head -5
+          # Verify critical shell scripts
+          echo "Checking main scripts..."
+          for script in mole mo; do
+            if [[ -x "$MOLE_DIR/$script" ]]; then
+              echo "✓ $script is present and executable"
+            else
+              echo "✗ FAILED: $script missing or not executable"
+              exit 1
+            fi
+          done
           
-          echo "Bin directory:"
-          ls -la "$MOLE_DIR/bin/"
+          # Verify Go binaries exist in bin/
+          echo "Checking Go binaries..."
+          for binary in analyze-go status-go; do
+            if [[ -x "$MOLE_DIR/bin/$binary" ]]; then
+              echo "✓ $binary is present and executable"
+            else
+              echo "✗ FAILED: $binary missing or not executable"
+              exit 1
+            fi
+          done
           
-          echo "Lib directory:"
-          ls -la "$MOLE_DIR/lib/" | head -5
+          # Verify lib/core exists with required modules
+          echo "Checking lib/core modules..."
+          for module in base log timeout file_ops help ui app_protection commands; do
+            if [[ -f "$MOLE_DIR/lib/core/${module}.sh" ]]; then
+              echo "✓ lib/core/${module}.sh exists"
+            else
+              echo "✗ WARNING: lib/core/${module}.sh missing"
+            fi
+          done
           
-          # Verify the binaries are executable
-          if [[ -x "$MOLE_DIR/bin/analyze-go" ]]; then
-            echo "✓ analyze-go is executable"
-          else
-            echo "✗ ERROR: analyze-go is not executable"
-            exit 1
-          fi
+          # Verify bin scripts
+          echo "Checking bin scripts..."
+          for script in analyze.sh status.sh clean.sh optimize.sh uninstall.sh; do
+            if [[ -x "$MOLE_DIR/bin/$script" ]]; then
+              echo "✓ bin/$script exists and executable"
+            else
+              echo "✗ WARNING: bin/$script missing or not executable"
+            fi
+          done
           
-          if [[ -x "$MOLE_DIR/bin/status-go" ]]; then
-            echo "✓ status-go is executable"
-          else
-            echo "✗ ERROR: status-go is not executable"
-            exit 1
-          fi
+          # Verify lib subdirectories
+          echo "Checking lib subdirectories..."
+          for subdir in clean optimize uninstall check manage ui; do
+            if [[ -d "$MOLE_DIR/lib/$subdir" ]]; then
+              echo "✓ lib/$subdir/ exists"
+            else
+              echo "✗ WARNING: lib/$subdir/ missing"
+            fi
+          done
           
-          if [[ -x "$MOLE_DIR/mole" ]]; then
-            echo "✓ mole script is executable"
-          else
-            echo "✗ ERROR: mole script is not executable"
-            exit 1
-          fi
+          echo "✓ Mole CLI bundled successfully"
 
       - name: Create DMG
         run: |
