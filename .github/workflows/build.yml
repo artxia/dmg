@@ -1,10 +1,16 @@
 name: Build and Release
 on:
   push:
+    branches:
+      - '**'
     tags:
       - '*'
   workflow_dispatch:
     inputs:
+      title:
+        description: 'Optional build title (fallback to branch name)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -17,6 +23,8 @@ jobs:
             os: macos-latest
             rust: stable
             target: x86_64-apple-darwin
+    env:
+      BUILD_TITLE: ${{ github.event.inputs.title || github.ref_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -42,14 +50,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build for macOS
+      - name: Build for macOS (x86_64)
         if: matrix.os == 'macos-latest'
         run: |
-          rustup target add aarch64-apple-darwin
+          set -e
           rustup target add x86_64-apple-darwin
-          npm run tauri build -- --target universal-apple-darwin
+          npm run tauri build -- --target x86_64-apple-darwin
           mkdir -p output/macos
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{inputs.title}}".dmg
+          # 尝试把 x86_64 输出移动到统一位置并用分支名/输入名命名
+          mv src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${BUILD_TITLE}"-x86_64.dmg || true
+          # 兼容之前可能生成 universal bundle 的情况（作为后备）
+          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${BUILD_TITLE}"-x86_64.dmg || true
 
       - name: Rust cache store
         uses: actions/cache/save@v3
@@ -62,11 +73,12 @@ jobs:
             src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Upload For Single Build
+      - name: Upload artifact (branch build)
         uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/') != true
         with:
-          path: 'output/*/*.*'
+          name: macos-dmg-${{ env.BUILD_TITLE }}-x86_64
+          path: 'output/macos/*.dmg'
 
       - name: Upload For Release
         # arg info: https://github.com/ncipollo/release-action#release-action
