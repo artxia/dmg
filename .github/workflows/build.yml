@@ -13,9 +13,105 @@ on:
         default: ''
 
 jobs:
+  build-helper:
+    name: Build ai-reminder (x86_64 macOS)
+    # Use macos-11 (typically x86_64). Change if your org's runners differ.
+    runs-on: macos-11
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust (for building helper)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Build or download helper binary
+        run: |
+          set -euo pipefail
+          ARTIFACT="ai-reminder-x86_64-apple-darwin"
+
+          # 1) Try download from upstream release (optional)
+          UPSTREAM_OWNER="ZekerTop"
+          UPSTREAM_REPO="ai-cli-complete-notify"
+          RELEASE_TAG="v2.8.0"
+          DOWNLOAD_URL="https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/releases/download/${RELEASE_TAG}/${ARTIFACT}"
+          echo "Attempting to download upstream asset: ${DOWNLOAD_URL}"
+          if curl -fL -o "${ARTIFACT}" "${DOWNLOAD_URL}" ; then
+            chmod +x "${ARTIFACT}"
+            echo "Downloaded upstream ${ARTIFACT}"
+          else
+            echo "Upstream asset not found, try building from repo sources..."
+
+            # 2) Try build from src-tauri/ai-reminder
+            if [ -d "src-tauri/ai-reminder" ]; then
+              echo "Building helper from src-tauri/ai-reminder"
+              pushd src-tauri/ai-reminder
+              cargo build --release
+              BIN="target/release/ai-reminder"
+              popd
+              if [ -f "${BIN}" ]; then
+                cp "${BIN}" "${ARTIFACT}"
+                chmod +x "${ARTIFACT}"
+              fi
+            fi
+
+            # 3) Try build from tools/ai-reminder
+            if [ ! -f "${ARTIFACT}" ] && [ -d "tools/ai-reminder" ]; then
+              echo "Building helper from tools/ai-reminder"
+              pushd tools/ai-reminder
+              cargo build --release
+              BIN="target/release/ai-reminder"
+              popd
+              if [ -f "${BIN}" ]; then
+                cp "${BIN}" "${ARTIFACT}"
+                chmod +x "${ARTIFACT}"
+              fi
+            fi
+
+            # 4) Fallback: create minimal placeholder helper so packaging can proceed
+            if [ ! -f "${ARTIFACT}" ]; then
+              echo "No helper source found — building placeholder helper"
+              mkdir -p .ci/ai-reminder
+              pushd .ci/ai-reminder
+              cargo init --bin --name ai-reminder --quiet
+              cat > src/main.rs <<'EOF'
+              fn main() {
+                  println!("ai-reminder placeholder");
+              }
+              EOF
+              cargo build --release
+              BIN="target/release/ai-reminder"
+              if [ ! -f "${BIN}" ]; then
+                echo "ERROR: placeholder build failed"
+                ls -la target/release || true
+                exit 1
+              fi
+              cp "${BIN}" "../../${ARTIFACT}"
+              popd
+              chmod +x "${ARTIFACT}"
+            fi
+          fi
+
+          # verify
+          if [ ! -f "${ARTIFACT}" ]; then
+            echo "ERROR: helper artifact not produced"
+            exit 1
+          fi
+          ls -la "${ARTIFACT}"
+
+      - name: Upload helper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-reminder-x86_64-apple-darwin
+          path: ai-reminder-x86_64-apple-darwin
+
   build:
     name: macos-latest
-    runs-on: ${{ matrix.os }}
+    needs: build-helper
+    runs-on: macos-latest
     strategy:
       matrix:
         include:
@@ -28,8 +124,32 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
 
-      - name: Install Rust
+      - name: Download helper artifact from build-helper
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-reminder-x86_64-apple-darwin
+          path: ./helper-artifact
+
+      - name: Place helper into Tauri resources & binaries
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/resources/ai-reminder
+          mkdir -p src-tauri/binaries
+
+          # Copy the prepared artifact into all locations expected by tauri/scripts
+          cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/resources/ai-reminder/ai-reminder
+          cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder-x86_64-apple-darwin
+          # tauri.conf.json references "binaries/ai-reminder", keep that name too
+          cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder
+          chmod +x src-tauri/resources/ai-reminder/ai-reminder
+          chmod +x src-tauri/binaries/ai-reminder*
+          ls -la src-tauri/resources/ai-reminder || true
+          ls -la src-tauri/binaries || true
+
+      - name: Install Rust (for main build)
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
@@ -50,90 +170,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare native helper binary (build locally in repo)
-        run: |
-          set -euo pipefail
-
-          mkdir -p src-tauri/binaries
-          TARGET="${{ matrix.target }}"
-          echo "Preparing helper binary for target: ${TARGET}"
-
-          # 1) If this repo contains a helper crate at src-tauri/ai-reminder, build that.
-          if [ -d "src-tauri/ai-reminder" ]; then
-            echo "Found local helper at src-tauri/ai-reminder — building it"
-            pushd src-tauri/ai-reminder
-            rustup target add "${TARGET}" || true
-            cargo build --release --target "${TARGET}"
-            if [ ! -f "target/${TARGET}/release/ai-reminder" ]; then
-              echo "ERROR: expected built binary not found: target/${TARGET}/release/ai-reminder"
-              ls -la "target/${TARGET}/release" || true
-              exit 1
-            fi
-            cp "target/${TARGET}/release/ai-reminder" "../../binaries/ai-reminder-${TARGET}"
-            popd
-            chmod +x "src-tauri/binaries/ai-reminder-${TARGET}"
-            echo "Built helper copied to src-tauri/binaries/ai-reminder-${TARGET}"
-            exit 0
-          fi
-
-          # 2) If there is a tools/ai-reminder crate in this repo, build that.
-          if [ -d "tools/ai-reminder" ]; then
-            echo "Found local helper at tools/ai-reminder — building it"
-            pushd tools/ai-reminder
-            rustup target add "${TARGET}" || true
-            cargo build --release --target "${TARGET}"
-            if [ ! -f "target/${TARGET}/release/ai-reminder" ]; then
-              echo "ERROR: expected built binary not found: target/${TARGET}/release/ai-reminder"
-              ls -la "target/${TARGET}/release" || true
-              exit 1
-            fi
-            cp "target/${TARGET}/release/ai-reminder" "../../src-tauri/binaries/ai-reminder-${TARGET}"
-            popd
-            chmod +x "src-tauri/binaries/ai-reminder-${TARGET}"
-            echo "Built helper copied to src-tauri/binaries/ai-reminder-${TARGET}"
-            exit 0
-          fi
-
-          # 3) Fallback: create a minimal Rust binary in .ci/ai-reminder and build it.
-          # This ensures the tauri build won't fail due to missing file. Replace with real helper if needed.
-          echo "No local helper crate found; creating a minimal placeholder helper and building it"
-          mkdir -p .ci/ai-reminder
-          pushd .ci/ai-reminder
-          # initialize a tiny cargo binary project (quiet)
-          if [ ! -f Cargo.toml ]; then
-            cargo init --bin --name ai-reminder --quiet
-          fi
-          # overwrite src/main.rs with a minimal program
-          cat > src/main.rs <<'EOF'
-          fn main() {
-              // Minimal placeholder helper. Replace with actual helper implementation if needed.
-              println!("ai-reminder placeholder");
-          }
-          EOF
-          rustup target add "${TARGET}" || true
-          cargo build --release --target "${TARGET}"
-          BINARY="target/${TARGET}/release/ai-reminder"
-          if [ ! -f "${BINARY}" ]; then
-            echo "ERROR: placeholder build failed — binary not found at ${BINARY}"
-            ls -la target/${TARGET}/release || true
-            popd
-            exit 1
-          fi
-          cp "${BINARY}" ../../src-tauri/binaries/ai-reminder-${TARGET}
-          popd
-          chmod +x "src-tauri/binaries/ai-reminder-${TARGET}"
-          echo "Placeholder helper built and copied to src-tauri/binaries/ai-reminder-${TARGET}"
-
       - name: Build for macOS (x86_64)
-        if: matrix.os == 'macos-latest'
         run: |
           set -e
           rustup target add x86_64-apple-darwin || true
           npm run tauri build -- --target x86_64-apple-darwin
           mkdir -p output/macos
-          # 尝试把 x86_64 输出移动到统一位置并用分支名/输入名命名
           mv src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${BUILD_TITLE}"-x86_64.dmg || true
-          # 兼容之前可能生成 universal bundle 的情况（作为后备）
           mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${BUILD_TITLE}"-x86_64.dmg || true
 
       - name: Rust cache store
@@ -155,7 +198,6 @@ jobs:
           path: 'output/macos/*.dmg'
 
       - name: Upload For Release
-        # arg info: https://github.com/ncipollo/release-action#release-action
         uses: ncipollo/release-action@v1
         if: startsWith(github.ref, 'refs/tags/') == true
         with:
