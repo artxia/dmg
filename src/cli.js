@@ -1,0 +1,504 @@
+const { parseArgs } = require('./args');
+const { loadConfig, saveConfig, getConfigPath } = require('./config');
+const { markTaskStart, consumeTaskStart } = require('./state');
+const { sendNotifications } = require('./engine');
+const {
+  PRODUCT_NAME,
+  getDataDir,
+  getPrimaryEnvPath,
+  getStatePath,
+  getWatchLogsDir,
+  getWatchLogPath,
+  getLatestWatchLogPath
+} = require('./paths');
+const { getClaudeHookNotificationContext, getOpenCodeHookNotificationContext } = require('./hook-context');
+const { exec, spawn } = require('child_process');
+const path = require('path');
+
+function toNumberOrNull(value) {
+  if (value == null) return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function printHelp() {
+  const invoke = getCliInvokeLabel();
+  console.log(`${PRODUCT_NAME}
+
+用法:
+  ${invoke} start  --source claude  --task "..."
+  ${invoke} stop   --source claude  --task "..." [--force]
+  ${invoke} notify --source claude  --task "..." [--duration-minutes 12] [--force] [--from-hook]
+  ${invoke} summary-test
+  ${invoke} run    --source claude  -- <command> [args...]
+  ${invoke} watch  [--sources all] [--interval-ms 1000] [--gemini-quiet-ms 3000] [--claude-quiet-ms 60000] [--quiet]
+  ${invoke} paths
+  ${invoke} env-status [--create-example]
+  ${invoke} hooks  status
+  ${invoke} hooks  install   --target claude|gemini|opencode
+  ${invoke} hooks  uninstall --target claude|gemini|opencode
+  ${invoke} hooks  preview   --target claude|gemini|opencode
+  ${invoke} config
+
+说明:
+  - source 支持: claude / codex / opencode / gemini
+  - 阈值提醒建议使用 start/stop（自动计算耗时）
+  - 最省事的接入方式是 run：由 ${PRODUCT_NAME} 负责计时并在命令结束后提醒
+  - 交互式 / VSCode 插件场景建议使用 watch：自动监听本机日志并在每次回复完成后提醒（Claude / Codex / Gemini）
+  - hooks：Claude Code / Gemini CLI 使用原生 hooks；OpenCode 通过全局 plugin 接收 session.idle / session.error 事件
+
+配置:
+  - settings: ${getConfigPath()}
+  - dataDir: ${getDataDir()}
+  - env: WEBHOOK_URLS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, EMAIL_HOST/EMAIL_USER/EMAIL_PASS/EMAIL_FROM/EMAIL_TO
+`);
+}
+
+function getCliInvokeLabel() {
+  if (process.pkg) {
+    return path.basename(process.execPath || 'ai-reminder.exe');
+  }
+  const scriptPath = process.argv[1] ? path.basename(process.argv[1]) : 'ai-reminder.js';
+  return `node ${scriptPath}`;
+}
+
+function sleep(ms) {
+  const delay = Number(ms);
+  if (!Number.isFinite(delay) || delay <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function isValidHookTarget(target) {
+  return target === 'claude' || target === 'gemini' || target === 'opencode';
+}
+
+async function runCli(argv) {
+  const { positional, flags, rest } = parseArgs(argv);
+  const command = positional[0] || 'help';
+
+  if (flags.help || flags.h || command === 'help' || command === '--help') {
+    printHelp();
+    return { ok: true, mode: 'help' };
+  }
+
+  if (command === 'open-file') {
+    const filePath = positional[1] || String(flags.path || flags.p || '');
+    if (!filePath) {
+      console.error(JSON.stringify({ ok: false, error: 'missing file path' }));
+      return { ok: false };
+    }
+    openFile(filePath);
+    console.log(JSON.stringify({ ok: true }));
+    return { ok: true, mode: 'open-file' };
+  }
+
+  if (command === 'config') {
+    if (flags.set) {
+      const config = loadConfig();
+      const patch = JSON.parse(String(flags.set));
+      const next = saveConfig({ ...config, ...patch });
+      console.log(JSON.stringify(next, null, 2));
+      return { ok: true, mode: 'config' };
+    }
+    console.log(JSON.stringify(loadConfig(), null, 2));
+    return { ok: true, mode: 'config' };
+  }
+
+  if (command === 'paths') {
+    const payload = {
+      dataDir: getDataDir(),
+      envPath: getPrimaryEnvPath(),
+      settingsPath: getConfigPath(),
+      statePath: getStatePath(),
+      watchLogsDir: getWatchLogsDir(),
+      activeWatchLogPath: getWatchLogPath(),
+      latestWatchLogPath: getLatestWatchLogPath()
+    };
+    console.log(JSON.stringify(payload, null, 2));
+    return { ok: true, mode: 'paths', result: payload };
+  }
+
+  if (command === 'env-status') {
+    const { getEnvSetupStatus } = require('./env-setup');
+    const status = getEnvSetupStatus({ createExample: Boolean(flags['create-example']) });
+    console.log(JSON.stringify(status, null, 2));
+    return { ok: status.ok, mode: 'env-status', result: status };
+  }
+
+  if (command === 'summary-test') {
+    const config = loadConfig();
+    const source = String(flags.source || flags.s || 'claude');
+    const { summarizeTaskDetailed } = require('./summary');
+    const result = await summarizeTaskDetailed({
+      config,
+      taskInfo: 'Summary test',
+      contentText: 'Source: Summary test',
+      summaryContext: {
+        userMessage: '测试 AI 摘要配置是否可用',
+        assistantMessage: '这是一段用于验证 AI 摘要是否真正返回内容的测试输出。'
+      }
+    });
+    const payload = { ...result };
+
+    if (flags.notify) {
+      const succeeded = Boolean(result && result.ok && result.summary);
+      const detail = [
+        result && result.error ? result.error : '',
+        result && result.status ? `HTTP ${result.status}` : '',
+        result && result.detail ? String(result.detail) : ''
+      ].filter(Boolean).join(' | ');
+      const outputContent = succeeded
+        ? `AI 摘要：${result.summary}`
+        : `未生成 AI 摘要：${detail || 'unknown'}`;
+
+      const originalLog = console.log;
+      let notification;
+      try {
+        console.log = (...args) => console.error(...args);
+        notification = await sendNotifications({
+          source,
+          taskInfo: succeeded ? 'AI 摘要测试成功' : 'AI 摘要测试失败',
+          durationMs: null,
+          cwd: process.cwd(),
+          force: true,
+          outputContent,
+          summaryContext: { assistantMessage: outputContent },
+          skipSummary: true
+        });
+      } finally {
+        console.log = originalLog;
+      }
+      const results = Array.isArray(notification && notification.results)
+        ? notification.results.map((item) => {
+          const nested = Array.isArray(item && item.results) ? item.results : [];
+          const nestedDetail = nested.map((r) => {
+            if (!r || r.ok) return '';
+            const provider = r.provider ? String(r.provider) : '';
+            const status = r.status ? `HTTP ${r.status}` : '';
+            const error = r.error ? String(r.error) : '';
+            const message = r.response && (r.response.msg || r.response.StatusMessage)
+              ? String(r.response.msg || r.response.StatusMessage)
+              : '';
+            return [provider, status, error || message].filter(Boolean).join(' ');
+          }).filter(Boolean).join(' / ');
+          return {
+            channel: item && item.channel ? item.channel : undefined,
+            ok: Boolean(item && item.ok),
+            error: item && item.error ? String(item.error) : (nestedDetail || undefined)
+          };
+        })
+        : [];
+      payload.notification = {
+        skipped: Boolean(notification && notification.skipped),
+        reason: notification && notification.reason ? String(notification.reason) : null,
+        results
+      };
+    }
+
+    console.log(JSON.stringify(payload, null, 2));
+    return { ok: true, mode: 'summary-test', result: payload };
+  }
+
+  if (command === 'hooks') {
+    const { getHookStatus, installHook, uninstallHook, getHookConfigPreview } = require('./hooks');
+    const subCommand = positional[1] || 'status';
+    const target = String(flags.target || flags.t || '');
+
+    if (subCommand === 'status') {
+      const status = getHookStatus();
+      console.log(JSON.stringify(status, null, 2));
+      return { ok: true, mode: 'hooks', subCommand: 'status', result: status };
+    }
+
+    if (subCommand === 'install') {
+      if (!isValidHookTarget(target)) {
+        console.error('请指定 --target claude / gemini / opencode');
+        return { ok: false, mode: 'hooks', error: 'Missing or invalid --target' };
+      }
+      const result = installHook(target);
+      console.log(result.ok ? `已安装 ${target} 集成 -> ${result.settingsPath}` : `安装失败: ${result.error}`);
+      return { ok: result.ok, mode: 'hooks', subCommand: 'install', result };
+    }
+
+    if (subCommand === 'uninstall') {
+      if (!isValidHookTarget(target)) {
+        console.error('请指定 --target claude / gemini / opencode');
+        return { ok: false, mode: 'hooks', error: 'Missing or invalid --target' };
+      }
+      const result = uninstallHook(target);
+      console.log(result.ok ? `已卸载 ${target} 集成` : `卸载失败: ${result.error}`);
+      return { ok: result.ok, mode: 'hooks', subCommand: 'uninstall', result };
+    }
+
+    if (subCommand === 'preview') {
+      const previewTarget = isValidHookTarget(target) ? target : 'claude';
+      const preview = getHookConfigPreview(previewTarget);
+      console.log(preview);
+      return { ok: true, mode: 'hooks', subCommand: 'preview' };
+    }
+
+    console.error(`未知 hooks 子命令: ${subCommand}`);
+    return { ok: false, mode: 'hooks', error: `Unknown hooks sub-command: ${subCommand}` };
+  }
+
+  if (command === 'watch') {
+    const sources = flags.sources || flags.source || flags.s || 'all';
+    const intervalMs = toNumberOrNull(flags['interval-ms']) || 1000;
+    const geminiQuietMs = toNumberOrNull(flags['gemini-quiet-ms']) || 3000;
+    const claudeQuietMs = toNumberOrNull(flags['claude-quiet-ms']);
+    const quiet = Boolean(flags.quiet);
+    const config = loadConfig();
+    const confirmAlert = () => {
+      const latestConfig = loadConfig();
+      return latestConfig && latestConfig.ui ? latestConfig.ui.confirmAlert : null;
+    };
+    const { createWatchLogWriter } = require('./watch-log');
+    const logWriter = createWatchLogWriter(config && config.ui ? config.ui.watchLogRetentionDays : 7);
+    const writeWatchLog = (line) => {
+      logWriter.writeLine(line);
+      if (!quiet) console.log(line);
+    };
+
+    // Check and remind about missing hooks
+    const { checkAndRemindHooks } = require('./hook-reminder');
+    checkAndRemindHooks(sources, { quiet });
+
+    const { startWatch } = require('./watch');
+    const stop = startWatch({
+      sources,
+      intervalMs,
+      geminiQuietMs,
+      claudeQuietMs,
+      confirmAlert,
+      log: writeWatchLog
+    });
+
+    if (!quiet) {
+      const claudeLabel = claudeQuietMs == null ? 'default' : claudeQuietMs;
+      writeWatchLog(`watching sources=${String(sources)} intervalMs=${intervalMs} geminiQuietMs=${geminiQuietMs} claudeQuietMs=${claudeLabel}`);
+    }
+
+    const cleanup = () => {
+      try {
+        stop();
+      } catch (_error) {
+        // ignore
+      }
+      logWriter.close();
+    };
+
+    process.once('SIGINT', () => {
+      cleanup();
+      process.exit(0);
+    });
+
+    process.once('SIGTERM', () => {
+      cleanup();
+      process.exit(0);
+    });
+
+    await new Promise(() => {});
+  }
+
+  const source = String(flags.source || flags.s || 'claude');
+  const taskInfo = String(flags.task || flags.message || flags.m || '任务已完成');
+  const cwd = process.cwd();
+
+  if (command === 'start') {
+    const entry = markTaskStart({ source, cwd, task: taskInfo });
+    console.log(`已记录开始: ${entry.source} (${entry.cwd})`);
+    return { ok: true, mode: 'start' };
+  }
+
+  if (command === 'stop') {
+    const entry = consumeTaskStart({ source, cwd });
+    const durationMs = entry ? Date.now() - entry.startedAt : null;
+
+    const result = await sendNotifications({ source, taskInfo, durationMs, cwd, force: Boolean(flags.force) });
+    printResult(result);
+    return { ok: true, mode: 'stop', result };
+  }
+
+  if (command === 'notify') {
+    const fromHook = Boolean(flags['from-hook']);
+    const durationMinutes = toNumberOrNull(flags['duration-minutes']);
+    const durationMs = durationMinutes != null ? durationMinutes * 60 * 1000 : toNumberOrNull(flags['duration-ms']);
+
+    let hookContext = null;
+    if (fromHook) {
+      const { readStdinJson } = require('./hooks-stdin');
+      hookContext = await readStdinJson();
+    }
+
+    const effectiveCwd = (hookContext && hookContext.cwd) || cwd;
+    const effectiveTask = (hookContext && hookContext.task_info) || taskInfo;
+    const hookNotificationContext =
+      fromHook && source === 'claude'
+        ? getClaudeHookNotificationContext(hookContext, effectiveTask)
+        : fromHook && source === 'opencode'
+          ? getOpenCodeHookNotificationContext(hookContext, effectiveTask)
+          : null;
+
+    if (hookNotificationContext && hookNotificationContext.skip) {
+      const skipped = {
+        skipped: true,
+        reason: hookNotificationContext.reason || 'hook notification skipped',
+        results: []
+      };
+      printResult(skipped);
+      return { ok: true, mode: 'notify', result: skipped };
+    }
+
+    if (hookNotificationContext && hookNotificationContext.delayMs > 0) {
+      await sleep(hookNotificationContext.delayMs);
+    }
+
+    const result = await sendNotifications({
+      source,
+      taskInfo: hookNotificationContext?.taskInfo || effectiveTask,
+      durationMs,
+      cwd: effectiveCwd,
+      force: Boolean(flags.force),
+      fromHook,
+      outputContent: hookNotificationContext?.outputContent,
+      summaryContext: hookNotificationContext?.summaryContext,
+      skipSummary: Boolean(hookNotificationContext?.skipSummary),
+      notifyKind: hookNotificationContext?.notifyKind,
+    });
+    printResult(result);
+    return { ok: true, mode: 'notify', result };
+  }
+
+  if (command === 'run') {
+    const childArgv = rest.length > 0 ? rest : positional.slice(1);
+    if (childArgv.length === 0) {
+      return { ok: false, mode: 'run', error: '缺少要执行的命令。示例：run --source codex -- codex <args...>' };
+    }
+
+    const startedAt = Date.now();
+    const { exitCode, spawnError } = await runChild(childArgv);
+    const durationMs = Date.now() - startedAt;
+
+    const effectiveTask = flags.task || flags.message || flags.m || buildAutoTask(childArgv, exitCode);
+    const notifyResult = await sendNotifications({
+      source,
+      taskInfo: String(effectiveTask),
+      durationMs,
+      cwd,
+      force: Boolean(flags.force)
+    });
+    printResult(notifyResult);
+
+    if (spawnError) {
+      return { ok: false, mode: 'run', error: spawnError, exitCode: typeof exitCode === 'number' ? exitCode : 1 };
+    }
+
+    return { ok: true, mode: 'run', exitCode: typeof exitCode === 'number' ? exitCode : 0, result: notifyResult };
+  }
+
+  return { ok: false, mode: 'unknown', error: `未知命令: ${command}` };
+}
+
+function openFile(filePath) {
+  const target = String(filePath || '');
+  if (process.platform === 'win32') {
+    const escaped = target.replace(/"/g, '\\"');
+    exec(`start "" "${escaped}"`);
+    return;
+  }
+
+  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const child = spawn(opener, [target], {
+    detached: true,
+    stdio: 'ignore',
+    shell: false,
+  });
+  child.on('error', () => {});
+  child.unref();
+}
+
+function runChild(childArgv) {
+  return new Promise((resolve) => {
+    const command = String(childArgv[0] || '');
+    const args = childArgv.slice(1).map((arg) => String(arg));
+
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const child = spawn(command, args, {
+      stdio: 'inherit',
+      windowsHide: false
+    });
+
+    child.on('error', (error) => {
+      if (process.platform !== 'win32') {
+        done({ exitCode: 127, spawnError: error && error.message ? error.message : String(error) });
+        return;
+      }
+
+      const cmdExe = process.env.ComSpec || 'cmd.exe';
+      const cmdLine = [command, ...args].map(quoteForCmd).join(' ');
+      const fallback = spawn(cmdExe, ['/d', '/s', '/c', cmdLine], {
+        stdio: 'inherit',
+        windowsHide: false
+      });
+
+      fallback.on('error', (fallbackError) => {
+        done({ exitCode: 127, spawnError: fallbackError && fallbackError.message ? fallbackError.message : String(fallbackError) });
+      });
+
+      fallback.on('close', (code) => {
+        done({ exitCode: code == null ? 0 : code, spawnError: null });
+      });
+    });
+
+    child.on('close', (code) => {
+      done({ exitCode: code == null ? 0 : code, spawnError: null });
+    });
+  });
+}
+
+function quoteForCmd(text) {
+  const value = String(text);
+  if (value === '') return '""';
+  if (!/[\s"]/g.test(value)) return value;
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function buildAutoTask(childArgv, exitCode) {
+  const preview = formatCommandPreview(childArgv);
+  if (exitCode === 0) return `完成: ${preview}`;
+  return `失败(退出码 ${exitCode}): ${preview}`;
+}
+
+function formatCommandPreview(argv) {
+  const parts = argv.map((value) => quoteIfNeeded(String(value)));
+  const joined = parts.join(' ');
+  if (joined.length <= 120) return joined;
+  return joined.slice(0, 117) + '...';
+}
+
+function quoteIfNeeded(text) {
+  if (text === '') return '""';
+  if (!/[\s"]/g.test(text)) return text;
+  return `"${text.replace(/"/g, '\\"')}"`;
+}
+
+function printResult(result) {
+  if (result.skipped) {
+    console.log(`已跳过提醒: ${result.reason}`);
+    return;
+  }
+  for (const item of result.results) {
+    const status = item.ok ? 'OK' : 'FAIL';
+    console.log(`${status} ${item.channel}${item.error ? `: ${item.error}` : ''}`);
+  }
+}
+
+module.exports = {
+  runCli
+};
