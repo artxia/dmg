@@ -14,9 +14,9 @@ on:
 
 jobs:
   build-helper:
-    name: Build ai-reminder sidecar (create tarball)
-    # Use macos-latest per your requirement; this runner often can be x86_64 in GitHub-hosted pool.
-    runs-on: macos-latest
+    name: Build ai-reminder sidecar (create tarball on x86 mac)
+    # Use macos-14-large to get an x86_64 GitHub-hosted mac runner per runner-images guidance
+    runs-on: macos-14-large
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -32,62 +32,59 @@ jobs:
         run: |
           set -euo pipefail
           echo "Building sidecar for darwin:x64"
-          # This script will populate src-tauri/resources/ai-reminder, src-tauri/resources/node, src-tauri/binaries/ai-reminder-*
           npm run build:sidecar:mac:x64
 
-          echo "Listing generated paths (resources & binaries):"
+          echo "Listing generated paths:"
           ls -la src-tauri || true
           ls -la src-tauri/resources || true
           ls -la src-tauri/resources/ai-reminder || true
           ls -la src-tauri/resources/node || true
           ls -la src-tauri/binaries || true
 
-      - name: Verify node binary & wrapper architecture
+      - name: Ensure x86_64 Node runtime exists (download if missing)
         run: |
           set -euo pipefail
-          echo "Runner uname -m:"
-          uname -m || true
-
           NODE_BIN="src-tauri/resources/node/bin/node"
           if [ -f "$NODE_BIN" ]; then
-            echo "Found node at $NODE_BIN"
+            echo "Node runtime exists at $NODE_BIN"
             file "$NODE_BIN" || true
-            if command -v lipo >/dev/null 2>&1; then
-              echo "lipo -info:"
-              lipo -info "$NODE_BIN" || true
-            fi
+            if command -v lipo >/dev/null 2>&1; then lipo -info "$NODE_BIN" || true; fi
           else
-            echo "ERROR: node runtime not found at $NODE_BIN"
-            ls -la src-tauri/resources || true
-            exit 1
+            echo "Node runtime missing — downloading darwin x64 Node to embed into sidecar"
+            NODE_VER="v18.20.1"
+            NODE_PKG="node-${NODE_VER}-darwin-x64"
+            TAR="${NODE_PKG}.tar.gz"
+            URL="https://nodejs.org/dist/${NODE_VER}/${TAR}"
+            curl -fL -o "${TAR}" "${URL}"
+            tar -xzf "${TAR}"
+            mkdir -p "$(dirname "$NODE_BIN")"
+            cp "${NODE_PKG}/bin/node" "$NODE_BIN"
+            chmod +x "$NODE_BIN"
+            file "$NODE_BIN" || true
+            if command -v lipo >/dev/null 2>&1; then lipo -info "$NODE_BIN" || true; fi
+            rm -rf "${NODE_PKG}" "${TAR}"
           fi
 
-          # check wrapper(s)
-          echo "Looking for ai-reminder wrappers under src-tauri/binaries"
+      - name: Verify ai-reminder wrapper(s) present
+        run: |
+          set -euo pipefail
           ls -la src-tauri/binaries || true
-          if ls src-tauri/binaries/ai-reminder* 1> /dev/null 2>&1; then
-            for f in src-tauri/binaries/ai-reminder*; do
-              echo "Wrapper: $f"
-              file "$f" || true
-              if command -v lipo >/dev/null 2>&1; then
-                lipo -info "$f" || true
-              fi
-            done
-          else
-            echo "ERROR: no ai-reminder wrapper files found under src-tauri/binaries"
+          if ! ls src-tauri/binaries/ai-reminder* 1> /dev/null 2>&1; then
+            echo "ERROR: expected ai-reminder wrapper(s) under src-tauri/binaries but none found"
             exit 1
           fi
+          for f in src-tauri/binaries/ai-reminder*; do
+            echo "Wrapper: $f"
+            file "$f" || true
+          done
 
       - name: Package sidecar into tarball
         run: |
           set -euo pipefail
           PKG="ai-reminder-sidecar.tar.gz"
-          # create a clean packaging dir to avoid including other files
           rm -rf .sidecar_package
           mkdir -p .sidecar_package/src-tauri/resources
           mkdir -p .sidecar_package/src-tauri/binaries
-
-          # copy resources and binaries if present
           if [ -d src-tauri/resources/ai-reminder ]; then
             cp -a src-tauri/resources/ai-reminder .sidecar_package/src-tauri/resources/
           fi
@@ -97,11 +94,8 @@ jobs:
           if ls src-tauri/binaries/ai-reminder* 1> /dev/null 2>&1; then
             cp -a src-tauri/binaries/ai-reminder* .sidecar_package/src-tauri/binaries/ || true
           fi
-
-          # show package preview
-          echo "Sidecar package contents:"
-          find .sidecar_package -maxdepth 5 -type f -print || true
-
+          echo "Sidecar package preview:"
+          find .sidecar_package -type f -print || true
           tar -czf "$PKG" -C .sidecar_package .
           ls -la "$PKG"
 
@@ -142,7 +136,6 @@ jobs:
           set -euo pipefail
           echo "helper-artifact listing:"
           ls -la helper-artifact || true
-          echo "If tarball present, list inside:"
           if [ -f helper-artifact/ai-reminder-sidecar.tar.gz ]; then
             tar -tzf helper-artifact/ai-reminder-sidecar.tar.gz | sed -n '1,200p' || true
           else
@@ -156,27 +149,25 @@ jobs:
           set -euo pipefail
           mkdir -p tmp_sidecar_unpack
           tar -xzf helper-artifact/ai-reminder-sidecar.tar.gz -C tmp_sidecar_unpack
-          echo "Unpacked preview:"
           find tmp_sidecar_unpack -maxdepth 4 -type f -print || true
-
-          # Ensure target directories exist in repo
           mkdir -p src-tauri/resources src-tauri/binaries
-
-          # Move unpacked src-tauri content into repo's src-tauri (overwrite)
           if [ -d tmp_sidecar_unpack/src-tauri/resources ]; then
             cp -a tmp_sidecar_unpack/src-tauri/resources/* src-tauri/resources/ || true
           fi
           if [ -d tmp_sidecar_unpack/src-tauri/binaries ]; then
             cp -a tmp_sidecar_unpack/src-tauri/binaries/* src-tauri/binaries/ || true
           fi
-
-          echo "After copy, listing src-tauri/resources and src-tauri/binaries:"
+          if [ -f tmp_sidecar_unpack/ai-reminder-x86_64-apple-darwin ]; then
+            cp tmp_sidecar_unpack/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ || true
+          fi
+          if [ -f src-tauri/binaries/ai-reminder-x86_64-apple-darwin ] && [ ! -f src-tauri/binaries/ai-reminder ]; then
+            cp src-tauri/binaries/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder || true
+          fi
+          chmod -R a+rX src-tauri/resources src-tauri/binaries || true
           ls -la src-tauri/resources || true
           ls -la src-tauri/resources/ai-reminder || true
           ls -la src-tauri/resources/node/bin || true
           ls -la src-tauri/binaries || true
-
-          # final existence checks
           if [ ! -d src-tauri/resources/ai-reminder ]; then
             echo "ERROR: resources/ai-reminder not present after extraction"
             exit 1
