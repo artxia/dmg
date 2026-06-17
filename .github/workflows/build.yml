@@ -47,7 +47,7 @@ jobs:
 
             # 2) Try build from src-tauri/ai-reminder
             if [ -d "src-tauri/ai-reminder" ]; then
-              echo "Building helper from src-tauri/ai-reminder"
+              echo "Building helper from src-tauri/ai-reminder (release)"
               pushd src-tauri/ai-reminder
               cargo build --release
               BIN="target/release/ai-reminder"
@@ -60,7 +60,7 @@ jobs:
 
             # 3) Try build from tools/ai-reminder
             if [ ! -f "${ARTIFACT}" ] && [ -d "tools/ai-reminder" ]; then
-              echo "Building helper from tools/ai-reminder"
+              echo "Building helper from tools/ai-reminder (release)"
               pushd tools/ai-reminder
               cargo build --release
               BIN="target/release/ai-reminder"
@@ -71,31 +71,32 @@ jobs:
               fi
             fi
 
-            # 4) Fallback: create minimal placeholder helper so packaging can proceed
+            # 4) Fallback: create a minimal Rust binary in .ci/ai-reminder and build it.
             if [ ! -f "${ARTIFACT}" ]; then
               echo "No helper source found — building placeholder helper"
               mkdir -p .ci/ai-reminder
               pushd .ci/ai-reminder
               cargo init --bin --name ai-reminder --quiet
-              cat > src/main.rs <<'EOF'
-              fn main() {
-                  println!("ai-reminder placeholder");
-              }
-              EOF
+
+              # Use printf to avoid heredoc indentation issues in GitHub Actions run blocks
+              printf '%s\n' 'fn main() {' '    println!("ai-reminder placeholder");' '}' > src/main.rs
+
               cargo build --release
               BIN="target/release/ai-reminder"
               if [ ! -f "${BIN}" ]; then
                 echo "ERROR: placeholder build failed"
                 ls -la target/release || true
+                popd
                 exit 1
               fi
+              # copy produced binary to top-level artifact name
               cp "${BIN}" "../../${ARTIFACT}"
               popd
               chmod +x "${ARTIFACT}"
             fi
           fi
 
-          # verify
+          # verify artifact exists
           if [ ! -f "${ARTIFACT}" ]; then
             echo "ERROR: helper artifact not produced"
             exit 1
@@ -133,19 +134,29 @@ jobs:
           name: ai-reminder-x86_64-apple-darwin
           path: ./helper-artifact
 
-      - name: Place helper into Tauri resources & binaries
+      - name: Verify downloaded helper and copy into place
         run: |
           set -euo pipefail
+          echo "Listing helper-artifact directory:"
+          ls -la ./helper-artifact || true
+
+          if [ ! -f ./helper-artifact/ai-reminder-x86_64-apple-darwin ]; then
+            echo "ERROR: helper artifact missing at ./helper-artifact/ai-reminder-x86_64-apple-darwin"
+            echo "Please check build-helper job produced and uploaded the artifact."
+            exit 1
+          fi
+
           mkdir -p src-tauri/resources/ai-reminder
           mkdir -p src-tauri/binaries
 
-          # Copy the prepared artifact into all locations expected by tauri/scripts
           cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/resources/ai-reminder/ai-reminder
           cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder-x86_64-apple-darwin
-          # tauri.conf.json references "binaries/ai-reminder", keep that name too
+          # tauri.conf.json references "binaries/ai-reminder"
           cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder
-          chmod +x src-tauri/resources/ai-reminder/ai-reminder
-          chmod +x src-tauri/binaries/ai-reminder*
+
+          chmod +x src-tauri/resources/ai-reminder/ai-reminder src-tauri/binaries/ai-reminder*
+          echo "After copying, listing src-tauri/resources and src-tauri/binaries:"
+          ls -la src-tauri/resources || true
           ls -la src-tauri/resources/ai-reminder || true
           ls -la src-tauri/binaries || true
 
