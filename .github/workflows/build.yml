@@ -14,100 +14,74 @@ on:
 
 jobs:
   build-helper:
-    name: Build ai-reminder (x86_64 macOS)
-    # Use macos-11 (typically x86_64). Change if your org's runners differ.
-    runs-on: macos-latest
+    name: Build ai-reminder sidecar (x86_64 mac)
+    # IMPORTANT: This job MUST run on an x86_64 mac runner to produce an x86 node binary.
+    # If your account provides macos-11 as x86_64, use macos-11. Here we use macos-12 as common choice.
+    runs-on: macos-12
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 1
 
-      - name: Install Rust (for building helper)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      - name: Install Node (for sidecar build) and Rust (if needed)
+        run: |
+          # Node and npm exist on mac runners; ensure npm packages will be installed.
+          node -v || true
+          npm -v || true
+          rustc -V || true
 
-      - name: Build or download helper binary
+      - name: Install npm deps
+        run: |
+          set -e
+          npm ci
+
+      - name: Build mac sidecar (x64)
         run: |
           set -euo pipefail
-          ARTIFACT="ai-reminder-x86_64-apple-darwin"
+          echo "Building sidecar for darwin:x64 via npm script"
+          npm run build:sidecar:mac:x64
+          echo "Sidecar build finished. Listing generated paths:"
+          ls -la src-tauri/resources || true
+          ls -la src-tauri/resources/ai-reminder || true
+          ls -la src-tauri/resources/node || true
+          ls -la src-tauri/binaries || true
 
-          # 1) Try download from upstream release (optional)
-          UPSTREAM_OWNER="ZekerTop"
-          UPSTREAM_REPO="ai-cli-complete-notify"
-          RELEASE_TAG="v2.8.0"
-          DOWNLOAD_URL="https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/releases/download/${RELEASE_TAG}/${ARTIFACT}"
-          echo "Attempting to download upstream asset: ${DOWNLOAD_URL}"
-          if curl -fL -o "${ARTIFACT}" "${DOWNLOAD_URL}" ; then
-            chmod +x "${ARTIFACT}"
-            echo "Downloaded upstream ${ARTIFACT}"
+      - name: Verify node binary arch and wrapper
+        run: |
+          set -euo pipefail
+          echo "Runner arch:"
+          uname -m
+          if [ -f src-tauri/resources/node/bin/node ]; then
+            echo "Node binary present at src-tauri/resources/node/bin/node"
+            file src-tauri/resources/node/bin/node || true
+            # macOS universal check (lipo) if available
+            if command -v lipo >/dev/null 2>&1; then
+              lipo -info src-tauri/resources/node/bin/node || true
+            fi
           else
-            echo "Upstream asset not found, try building from repo sources..."
-
-            # 2) Try build from src-tauri/ai-reminder
-            if [ -d "src-tauri/ai-reminder" ]; then
-              echo "Building helper from src-tauri/ai-reminder (release)"
-              pushd src-tauri/ai-reminder
-              cargo build --release
-              BIN="target/release/ai-reminder"
-              popd
-              if [ -f "${BIN}" ]; then
-                cp "${BIN}" "${ARTIFACT}"
-                chmod +x "${ARTIFACT}"
-              fi
-            fi
-
-            # 3) Try build from tools/ai-reminder
-            if [ ! -f "${ARTIFACT}" ] && [ -d "tools/ai-reminder" ]; then
-              echo "Building helper from tools/ai-reminder (release)"
-              pushd tools/ai-reminder
-              cargo build --release
-              BIN="target/release/ai-reminder"
-              popd
-              if [ -f "${BIN}" ]; then
-                cp "${BIN}" "${ARTIFACT}"
-                chmod +x "${ARTIFACT}"
-              fi
-            fi
-
-            # 4) Fallback: create a minimal Rust binary in .ci/ai-reminder and build it.
-            if [ ! -f "${ARTIFACT}" ]; then
-              echo "No helper source found — building placeholder helper"
-              mkdir -p .ci/ai-reminder
-              pushd .ci/ai-reminder
-              cargo init --bin --name ai-reminder --quiet
-
-              # Use printf to avoid heredoc indentation issues in GitHub Actions run blocks
-              printf '%s\n' 'fn main() {' '    println!("ai-reminder placeholder");' '}' > src/main.rs
-
-              cargo build --release
-              BIN="target/release/ai-reminder"
-              if [ ! -f "${BIN}" ]; then
-                echo "ERROR: placeholder build failed"
-                ls -la target/release || true
-                popd
-                exit 1
-              fi
-              # copy produced binary to top-level artifact name
-              cp "${BIN}" "../../${ARTIFACT}"
-              popd
-              chmod +x "${ARTIFACT}"
-            fi
-          fi
-
-          # verify artifact exists
-          if [ ! -f "${ARTIFACT}" ]; then
-            echo "ERROR: helper artifact not produced"
+            echo "WARNING: node binary not found at src-tauri/resources/node/bin/node"
+            ls -la src-tauri/resources || true
             exit 1
           fi
-          ls -la "${ARTIFACT}"
+          if [ -f src-tauri/binaries/ai-reminder-x86_64-apple-darwin ]; then
+            echo "Wrapper present: src-tauri/binaries/ai-reminder-x86_64-apple-darwin"
+            ls -la src-tauri/binaries/ai-reminder* || true
+          else
+            echo "ERROR: expected wrapper not found in src-tauri/binaries"
+            ls -la src-tauri/binaries || true
+            exit 1
+          fi
 
-      - name: Upload helper artifact
+      - name: Upload sidecar resources artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-reminder-x86_64-apple-darwin
-          path: ai-reminder-x86_64-apple-darwin
+          name: ai-reminder-sidecar
+          path: |
+            src-tauri/resources/ai-reminder
+            src-tauri/resources/node
+            src-tauri/binaries/ai-reminder-*
+          retention-days: 1
 
   build:
     name: macos-latest
@@ -128,36 +102,60 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Download helper artifact from build-helper
+      - name: Download sidecar artifact
         uses: actions/download-artifact@v4
         with:
-          name: ai-reminder-x86_64-apple-darwin
+          name: ai-reminder-sidecar
           path: ./helper-artifact
 
-      - name: Verify downloaded helper and copy into place
+      - name: Inspect downloaded artifact
         run: |
           set -euo pipefail
-          echo "Listing helper-artifact directory:"
-          ls -la ./helper-artifact || true
+          echo "helper-artifact contents:"
+          ls -la helper-artifact || true
+          # show nested dirs if present
+          find helper-artifact -maxdepth 3 -type f -print || true
 
-          if [ ! -f ./helper-artifact/ai-reminder-x86_64-apple-darwin ]; then
-            echo "ERROR: helper artifact missing at ./helper-artifact/ai-reminder-x86_64-apple-darwin"
-            echo "Please check build-helper job produced and uploaded the artifact."
-            exit 1
-          fi
-
+      - name: Place helper into Tauri resources & binaries
+        run: |
+          set -euo pipefail
           mkdir -p src-tauri/resources/ai-reminder
+          mkdir -p src-tauri/resources/node/bin
           mkdir -p src-tauri/binaries
 
-          cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/resources/ai-reminder/ai-reminder
-          cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder-x86_64-apple-darwin
-          # tauri.conf.json references "binaries/ai-reminder"
-          cp ./helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder
+          # Copy downloaded parts (artifact contains paths relative to repo)
+          # The upload used explicit paths; adapt copying by checking what's present.
+          if [ -d helper-artifact/ai-reminder ]; then
+            cp -a helper-artifact/ai-reminder src-tauri/resources/ai-reminder
+          fi
+          if [ -d helper-artifact/node ]; then
+            cp -a helper-artifact/node src-tauri/resources/node
+          fi
+          # Copy any matching ai-reminder wrapper(s)
+          shopt -s nullglob || true
+          for f in helper-artifact/ai-reminder* helper-artifact/src-tauri/binaries/ai-reminder* helper-artifact/ai-reminder-*; do
+            if [ -f "$f" ]; then
+              cp "$f" src-tauri/binaries/ || true
+            fi
+          done
+          # Also copy any binaries found under helper-artifact
+          cp -a helper-artifact/src-tauri/binaries/* src-tauri/binaries/ 2>/dev/null || true
 
-          chmod +x src-tauri/resources/ai-reminder/ai-reminder src-tauri/binaries/ai-reminder*
-          echo "After copying, listing src-tauri/resources and src-tauri/binaries:"
+          # If no wrapper existed under helper-artifact root, try common locations
+          if [ -f helper-artifact/ai-reminder-x86_64-apple-darwin ]; then
+            cp helper-artifact/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ || true
+          fi
+
+          # Ensure expected names present for tauri.conf.json (externalBin: "binaries/ai-reminder")
+          if [ -f src-tauri/binaries/ai-reminder-x86_64-apple-darwin ] && [ ! -f src-tauri/binaries/ai-reminder ]; then
+            cp src-tauri/binaries/ai-reminder-x86_64-apple-darwin src-tauri/binaries/ai-reminder || true
+          fi
+
+          chmod -R a+rX src-tauri/resources src-tauri/binaries || true
+          echo "After copy, listing src-tauri/resources and src-tauri/binaries:"
           ls -la src-tauri/resources || true
           ls -la src-tauri/resources/ai-reminder || true
+          ls -la src-tauri/resources/node/bin || true
           ls -la src-tauri/binaries || true
 
       - name: Install Rust (for main build)
@@ -178,7 +176,7 @@ jobs:
             src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install dependencies
+      - name: Install frontend deps
         run: npm ci
 
       - name: Build for macOS (x86_64)
