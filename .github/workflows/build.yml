@@ -17,7 +17,7 @@ jobs:
     name: Build ai-reminder sidecar (x86_64 mac)
     # IMPORTANT: This job MUST run on an x86_64 mac runner to produce an x86 node binary.
     # If your account provides macos-11 as x86_64, use macos-11. Here we use macos-12 as common choice.
-    runs-on: macos-12
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
