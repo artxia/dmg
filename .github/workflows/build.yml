@@ -16,7 +16,7 @@ jobs:
   build-helper:
     name: Build ai-reminder (x86_64 macOS)
     # Use macos-11 (typically x86_64). Change if your org's runners differ.
-    runs-on: macos-11
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
