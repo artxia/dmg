@@ -7,16 +7,11 @@ on:
       - '*'
   workflow_dispatch:
     inputs:
-      title:
-        description: 'Optional build title (fallback to branch name)'
-        required: false
-        default: ''
 
 jobs:
   build-helper:
     name: Build ai-reminder sidecar (create tarball on x86 mac)
-    # Use macos-14-large to get an x86_64 GitHub-hosted mac runner per runner-images guidance
-    runs-on: macos-14-large
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
