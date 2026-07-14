@@ -26,11 +26,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10'
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
-          # target will be added explicitly in steps below
 
       - name: Rust cache restore
         id: cache_store
@@ -44,18 +54,15 @@ jobs:
             src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: '10' # 或你需要的 pnpm 版本
-      
+      - name: Debug: show workspace package.json locations
+        run: |
+          echo "Working dir: $(pwd)"
+          echo "Root package.json exists: $( [ -f package.json ] && echo yes || echo no )"
+          echo "List package.json files:"
+          find . -name package.json -maxdepth 4 -print -exec sh -c 'echo "----- $0 -----"; jq ".name, .scripts" $0 2>/dev/null || cat $0 || true' {} \;
+
       - name: Install dependencies (pnpm)
-        run: pnpm install --frozen-lockfile --prefer-frozen-lockfile
+        run: pnpm install --frozen-lockfile || pnpm install
 
       - name: Prepare Rust targets for universal build
         if: matrix.build == 'macos-universal'
@@ -71,19 +78,39 @@ jobs:
       - name: Build for macOS (universal)
         if: matrix.build == 'macos-universal'
         run: |
-          # build universal macOS bundle (includes both arm64 and x86_64)
-          npm run tauri build -- --target universal-apple-darwin
+          # Try to run tauri in the files package (fallback to run if exec not found)
+          set -e
+          echo "Attempting pnpm --dir files exec tauri ..."
+          if pnpm --dir files exec tauri -- --version >/dev/null 2>&1; then
+            pnpm --dir files exec tauri build -- --target ${TAURI_TARGET:-universal-apple-darwin}
+          elif pnpm --dir files run tauri -- --version >/dev/null 2>&1; then
+            pnpm --dir files run tauri -- --target ${TAURI_TARGET:-universal-apple-darwin}
+          else
+            echo "tauri not found in files/ package. Printing files/package.json for debugging:"
+            [ -f files/package.json ] && cat files/package.json || true
+            echo "You may need to install tauri in the files package or adjust the package path."
+            exit 1
+          fi
           mkdir -p output/macos/universal
-          # move any produced dmg(s) into output directory and include title if provided
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/universal/"${{ inputs.title || github.ref_name || 'multica' }}".dmg || true
+          # Move produced dmgs from files/src-tauri (adjust if src-tauri is at repo root or other subdir)
+          mv files/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/universal/"${{ inputs.title || github.ref_name || 'multica' }}".dmg || true
 
       - name: Build for macOS (intel)
         if: matrix.build == 'macos-intel'
         run: |
-          # build x86_64-only macOS bundle (Intel)
-          npm run tauri build -- --target x86_64-apple-darwin
+          set -e
+          echo "Attempting pnpm --dir files exec tauri ..."
+          if pnpm --dir files exec tauri -- --version >/dev/null 2>&1; then
+            pnpm --dir files exec tauri build -- --target ${TAURI_TARGET:-x86_64-apple-darwin}
+          elif pnpm --dir files run tauri -- --version >/dev/null 2>&1; then
+            pnpm --dir files run tauri -- --target ${TAURI_TARGET:-x86_64-apple-darwin}
+          else
+            echo "tauri not found in files/ package. Printing files/package.json for debugging:"
+            [ -f files/package.json ] && cat files/package.json || true
+            exit 1
+          fi
           mkdir -p output/macos/intel
-          mv src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg output/macos/intel/"${{ inputs.title || github.ref_name || 'multica' }}".dmg || true
+          mv files/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg output/macos/intel/"${{ inputs.title || github.ref_name || 'multica' }}".dmg || true
 
       - name: Rust cache store
         uses: actions/cache/save@v3
@@ -98,13 +125,11 @@ jobs:
 
       - name: Upload For Single Build
         uses: actions/upload-artifact@v4
-        # when not creating a tag release, upload intermediate artifacts
         if: startsWith(github.ref, 'refs/tags/') != true
         with:
           path: 'output/*/*.*'
 
       - name: Upload For Release
-        # arg info: https://github.com/ncipollo/release-action#release-action
         uses: ncipollo/release-action@v1
         if: startsWith(github.ref, 'refs/tags/') == true
         with:
