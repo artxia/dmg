@@ -63,12 +63,12 @@ jobs:
         uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/') != true
         with:
-          path: 'output/*/*.*'
+          path: 'output/**/*.dmg'
 
       - name: Upload For Release
         uses: ncipollo/release-action@v1
         if: startsWith(github.ref, 'refs/tags/') == true
         with:
           allowUpdates: true
-          artifacts: 'output/*/*.*'
+          artifacts: 'output/**/*.dmg'
           token: ${{ secrets.GITHUB_TOKEN }}
