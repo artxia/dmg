@@ -7,21 +7,9 @@ on:
     inputs:
 
 jobs:
-  build:
-    name: macos - build ${{ matrix.build }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - build: macos-universal
-            os: macos-15
-            rust: stable
-            tauri_target: universal-apple-darwin
-          - build: macos-intel
-            os: macos-15
-            rust: stable
-            tauri_target: x86_64-apple-darwin
-
+  build-macos:
+    name: Build macOS (apps/desktop)
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -30,90 +18,33 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'pnpm'
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v2
         with:
           version: '10'
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-
-      - name: Rust cache restore
-        id: cache_store
-        uses: actions/cache/restore@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Install dependencies (pnpm)
-        run: pnpm install --frozen-lockfile || pnpm install
-
-      - name: Prepare Rust targets for universal build
-        if: matrix.build == 'macos-universal'
-        run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
-
-      - name: Prepare Rust target for intel build
-        if: matrix.build == 'macos-intel'
-        run: |
-          rustup target add x86_64-apple-darwin
-
-      - name: Build for macOS (universal)
-        if: matrix.build == 'macos-universal'
-        run: |
-          # Try to run tauri in the files package (fallback to run if exec not found)
-          set -e
-          echo "Attempting pnpm --dir files exec tauri ..."
-          if pnpm --dir files exec tauri -- --version >/dev/null 2>&1; then
-            pnpm --dir files exec tauri build -- --target ${TAURI_TARGET:-universal-apple-darwin}
-          elif pnpm --dir files run tauri -- --version >/dev/null 2>&1; then
-            pnpm --dir files run tauri -- --target ${TAURI_TARGET:-universal-apple-darwin}
-          else
-            echo "tauri not found in files/ package. Printing files/package.json for debugging:"
-            [ -f files/package.json ] && cat files/package.json || true
-            echo "You may need to install tauri in the files package or adjust the package path."
-            exit 1
-          fi
-          mkdir -p output/macos/universal
-          # Move produced dmgs from files/src-tauri (adjust if src-tauri is at repo root or other subdir)
-          mv files/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/universal/"${{ inputs.title || github.ref_name || 'multica' }}".dmg || true
-
-      - name: Build for macOS (intel)
-        if: matrix.build == 'macos-intel'
         run: |
           set -e
-          echo "Attempting pnpm --dir files exec tauri ..."
-          if pnpm --dir files exec tauri -- --version >/dev/null 2>&1; then
-            pnpm --dir files exec tauri build -- --target ${TAURI_TARGET:-x86_64-apple-darwin}
-          elif pnpm --dir files run tauri -- --version >/dev/null 2>&1; then
-            pnpm --dir files run tauri -- --target ${TAURI_TARGET:-x86_64-apple-darwin}
-          else
-            echo "tauri not found in files/ package. Printing files/package.json for debugging:"
-            [ -f files/package.json ] && cat files/package.json || true
-            exit 1
-          fi
-          mkdir -p output/macos/intel
-          mv files/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg output/macos/intel/"${{ inputs.title || github.ref_name || 'multica' }}".dmg || true
+          pnpm install --frozen-lockfile || pnpm install
 
-      - name: Rust cache store
-        uses: actions/cache/save@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build apps/desktop (electron package)
+        env:
+          CI: true
+        run: |
+          set -ex
+          # 硬编码桌面包目录
+          TAURI_DIR="apps/desktop"
+          # 调用项目内的打包脚本：node scripts/package.mjs -> electron-vite + electron-builder
+          # 使用 --mac --universal 构建 macOS 通用包（根据需要可改为 --mac --x64 或其它）
+          pnpm --dir "$TAURI_DIR" run package -- --mac --universal
+          # 收集生成的 .dmg（把找到的 .dmg 移到统一 output 目录）
+          mkdir -p output/macos
+          find "$TAURI_DIR" -type f -name '*.dmg' -exec mv {} output/macos/ \; || true
+          echo "Artifacts in output/macos:"
+          ls -la output/macos || true
 
       - name: Upload For Single Build
         uses: actions/upload-artifact@v4
