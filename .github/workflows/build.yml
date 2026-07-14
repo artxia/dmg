@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Swift app for x86_64
+      - name: Build Swift app for x86_64 (using swift build)
         run: |
           set -euo pipefail
           
@@ -26,30 +26,27 @@ jobs:
           APP_NAME="Vorssaint"
           EXECUTABLE="Vorssaint"
           TARGET="x86_64-apple-macosx14.0"
-          ENTITLEMENTS="Resources/Vorssaint.entitlements"
           
-          echo "▸ Compiling (release) for x86_64…"
+          echo "▸ Building for x86_64 with swift build…"
           rm -rf build
-          mkdir -p build
           
-          # Prefer macOS 26 SDK when available
-          PINNED_SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk"
-          if [[ -d "$PINNED_SDK" ]]; then
-              SDK="$PINNED_SDK"
-          else
-              SDK="$(xcrun --show-sdk-path)"
-          fi
-          echo "Using SDK: $(basename "$SDK")"
+          # Use Swift Package Manager to build with proper dependency handling
+          swift build -c release \
+              --arch x86_64 \
+              -Xswiftc -target -Xswiftc "$TARGET"
           
-          # Compile Swift sources
-          swiftc -O -target "$TARGET" -sdk "$SDK" \
-              Sources/Vorssaint/**/*.swift \
-              -o "build/$EXECUTABLE"
-          
-          if [ ! -f "build/$EXECUTABLE" ]; then
-              echo "✗ Compilation failed: executable not found"
+          # Find the built executable
+          BUILT_EXECUTABLE=".build/x86_64-apple-macosx/release/$EXECUTABLE"
+          if [ ! -f "$BUILT_EXECUTABLE" ]; then
+              echo "✗ Compilation failed: executable not found at $BUILT_EXECUTABLE"
+              ls -la .build/x86_64-apple-macosx/release/ || true
               exit 1
           fi
+          
+          # Copy to build directory for consistency
+          mkdir -p build
+          cp "$BUILT_EXECUTABLE" "build/$EXECUTABLE"
+          
           echo "✓ Compilation successful"
           
           # Store variables in environment for next steps
