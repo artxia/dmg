@@ -54,13 +54,6 @@ jobs:
             src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Debug: show workspace package.json locations
-        run: |
-          echo "Working dir: $(pwd)"
-          echo "Root package.json exists: $( [ -f package.json ] && echo yes || echo no )"
-          echo "List package.json files:"
-          find . -name package.json -maxdepth 4 -print -exec sh -c 'echo "----- $0 -----"; jq ".name, .scripts" $0 2>/dev/null || cat $0 || true' {} \;
-
       - name: Install dependencies (pnpm)
         run: pnpm install --frozen-lockfile || pnpm install
 
