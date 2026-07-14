@@ -38,7 +38,7 @@ jobs:
           ARCH_DIR="output/macos/x64"
           mkdir -p "$ARCH_DIR"
           # build x64
-          pnpm --dir "$TAURI_DIR" run package -- --mac --x64
+          pnpm --dir "$TAURI_DIR" run package -- --mac --x64 --publish never
           # move any produced .dmg into arch-specific output dir
           find "$TAURI_DIR" -type f -name '*.dmg' -maxdepth 6 -exec mv -f {} "$ARCH_DIR"/ \; || true
           echo "x64 artifacts:"
@@ -53,7 +53,7 @@ jobs:
           ARCH_DIR="output/macos/arm64"
           mkdir -p "$ARCH_DIR"
           # build arm64
-          pnpm --dir "$TAURI_DIR" run package -- --mac --arm64
+          pnpm --dir "$TAURI_DIR" run package -- --mac --arm64 --publish never
           # move any produced .dmg into arch-specific output dir
           find "$TAURI_DIR" -type f -name '*.dmg' -maxdepth 6 -exec mv -f {} "$ARCH_DIR"/ \; || true
           echo "arm64 artifacts:"
