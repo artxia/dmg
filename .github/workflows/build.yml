@@ -1,78 +1,195 @@
-name: Build and Release
+name: Build Intel macOS DMG
+
 on:
   push:
     tags:
       - '*'
   workflow_dispatch:
-    inputs:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: macos-latest
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - build: macos
-            os: macos-latest
-            rust: stable
-            target: x86_64-apple-darwin
+  build-intel:
+    name: Build & Package Intel DMG
+    runs-on: macos-15
+    timeout-minutes: 90
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.target }}
-
-      - name: Rust cache restore
-        id: cache_store
-        uses: actions/cache/restore@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build for macOS
-        if: matrix.os == 'macos-latest'
+      - name: Build Swift app for x86_64
         run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
-          npm run tauri build -- --target universal-apple-darwin
-          mkdir -p output/macos
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{inputs.title}}".dmg
+          set -euo pipefail
+          
+          # Configuration
+          APP_NAME="Vorssaint"
+          EXECUTABLE="Vorssaint"
+          TARGET="x86_64-apple-macos"
+          ENTITLEMENTS="Resources/Vorssaint.entitlements"
+          
+          echo "▸ Compiling (release) for x86_64…"
+          rm -rf build
+          mkdir -p build
+          
+          # Get SDK path
+          SDK="$(xcrun --show-sdk-path)"
+          echo "Using SDK: $SDK"
+          
+          # Compile Swift sources
+          swiftc -O -target "$TARGET" -sdk "$SDK" \
+              Sources/Vorssaint/**/*.swift \
+              -o "build/$EXECUTABLE"
+          
+          if [ ! -f "build/$EXECUTABLE" ]; then
+              echo "✗ Compilation failed: executable not found"
+              exit 1
+          fi
+          echo "✓ Compilation successful"
+          
+          # Store TARGET in environment for next steps
+          echo "SWIFT_TARGET=$TARGET" >> $GITHUB_ENV
+          echo "SWIFT_EXECUTABLE=$EXECUTABLE" >> $GITHUB_ENV
+          echo "SWIFT_APP_NAME=$APP_NAME" >> $GITHUB_ENV
 
-      - name: Rust cache store
-        uses: actions/cache/save@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Generate app icon
+        run: |
+          set -euo pipefail
+          echo "▸ Generating app icon…"
+          swift Tools/MakeIcon.swift build/AppIcon.iconset
+          xattr -c -r build/AppIcon.iconset build/AppIcon.icns build/MenuBarIcon.png build/MenuBarIcon@2x.png build/BrandMark.png 2>/dev/null || true
+          echo "✓ Icon generation complete"
 
-      - name: Upload For Single Build
+      - name: Assemble app bundle
+        run: |
+          set -euo pipefail
+          echo "▸ Assembling app bundle…"
+          
+          APP_NAME="${{ env.SWIFT_APP_NAME }}"
+          EXECUTABLE="${{ env.SWIFT_EXECUTABLE }}"
+          
+          # Create temporary staging directory
+          STAGE="$(mktemp -d)/$APP_NAME.app"
+          mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
+          
+          # Copy executable
+          cp "build/$EXECUTABLE" "$STAGE/Contents/MacOS/$EXECUTABLE"
+          
+          # Copy bundle metadata
+          cp Resources/Info.plist "$STAGE/Contents/Info.plist"
+          
+          # Copy resources
+          cp CHANGELOG.md "$STAGE/Contents/Resources/CHANGELOG.md" 2>/dev/null || true
+          
+          # Copy localization bundles (lproj directories)
+          for lproj in Resources/*.lproj; do
+              if [ -d "$lproj" ]; then
+                  cp -R "$lproj" "$STAGE/Contents/Resources/"
+              fi
+          done
+          
+          # Write PkgInfo
+          printf 'APPL????' > "$STAGE/Contents/PkgInfo"
+          
+          # Copy icon assets
+          cp build/AppIcon.icns "$STAGE/Contents/Resources/AppIcon.icns"
+          cp build/MenuBarIcon.png build/MenuBarIcon@2x.png build/BrandMark.png "$STAGE/Contents/Resources/"
+          
+          # Copy optional assets
+          if [ -f Resources/Gifs/dockPreview.gif ]; then
+              mkdir -p "$STAGE/Contents/Resources/Gifs"
+              cp Resources/Gifs/dockPreview.gif "$STAGE/Contents/Resources/Gifs/"
+          fi
+          
+          if [ -d Resources/Images ]; then
+              mkdir -p "$STAGE/Contents/Resources/Images"
+              cp Resources/Images/* "$STAGE/Contents/Resources/Images/"
+          fi
+          
+          # Clean extended attributes
+          xattr -c -r "$STAGE" 2>/dev/null || true
+          
+          # Copy to build/stage for DMG creation
+          mkdir -p "build/stage"
+          BUILD_STAGE="build/stage/$APP_NAME.app"
+          rm -rf "$BUILD_STAGE"
+          ditto --noextattr --noqtn "$STAGE" "$BUILD_STAGE"
+          xattr -c -r "$BUILD_STAGE" 2>/dev/null || true
+          
+          echo "✓ Bundle assembled: $BUILD_STAGE"
+          echo "BUILD_STAGE=$BUILD_STAGE" >> $GITHUB_ENV
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then
+              VERSION="dev"
+          fi
+          
+          APP_NAME="${{ env.SWIFT_APP_NAME }}"
+          BUILD_STAGE="${{ env.BUILD_STAGE }}"
+          
+          mkdir -p dist
+          DMG_FILE="dist/Vorssaint-${VERSION}-intel-x86_64.dmg"
+          
+          echo "▸ Creating DMG…"
+          
+          # Create a staging directory for DMG contents
+          TEMP_DMG_STAGE=$(mktemp -d)
+          cp -R "$BUILD_STAGE" "$TEMP_DMG_STAGE/"
+          xattr -c -r "$TEMP_DMG_STAGE" 2>/dev/null || true
+          
+          # Create DMG using hdiutil
+          hdiutil create \
+            -volname "$APP_NAME" \
+            -srcfolder "$TEMP_DMG_STAGE" \
+            -ov \
+            -format UDZO \
+            "$DMG_FILE"
+          
+          if [ -f "$DMG_FILE" ]; then
+              echo "✓ DMG created successfully"
+              ls -lh "$DMG_FILE"
+              echo "DMG_FILE=$DMG_FILE" >> $GITHUB_ENV
+          else
+              echo "✗ Failed to create DMG"
+              exit 1
+          fi
+          
+          rm -rf "$TEMP_DMG_STAGE"
+
+      - name: Verify DMG
+        run: |
+          set -euo pipefail
+          
+          DMG_FILE="${{ env.DMG_FILE }}"
+          
+          if [ -f "$DMG_FILE" ]; then
+              echo "✓ DMG file exists"
+              file "$DMG_FILE"
+              du -h "$DMG_FILE"
+          else
+              echo "✗ DMG file not found"
+              exit 1
+          fi
+
+      - name: Upload artifacts (manual workflow run)
         uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/') != true
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
-          path: 'output/*/*.*'
+          name: macos-intel-dmg
+          path: dist/*.dmg
+          retention-days: 7
 
-      - name: Upload For Release
-        # arg info: https://github.com/ncipollo/release-action#release-action
-        uses: ncipollo/release-action@v1
-        if: startsWith(github.ref, 'refs/tags/') == true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          allowUpdates: true
-          artifacts: 'output/*/*.*'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          files: dist/*.dmg
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
