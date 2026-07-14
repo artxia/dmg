@@ -1,8 +1,6 @@
 name: Build and Release
 on:
   push:
-    branches:
-      - '**'
     tags:
       - '*'
   workflow_dispatch:
@@ -199,8 +197,15 @@ jobs:
           rustup target add x86_64-apple-darwin || true
           npm run tauri build -- --target x86_64-apple-darwin
           mkdir -p output/macos
+          
+          # 查找实际生成的可执行文件
+          ls -la src-tauri/target/x86_64-apple-darwin/release/ || true
+          
+          # 如果需要 DMG，使用 bundle 命令而不是 build
+          npm run tauri bundle -- --target x86_64-apple-darwin --bundles dmg
+          
+          # 现在移动 DMG 文件
           mv src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${BUILD_TITLE}"-x86_64.dmg || true
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${BUILD_TITLE}"-x86_64.dmg || true
 
       - name: Rust cache store
         uses: actions/cache/save@v3
