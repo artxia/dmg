@@ -29,21 +29,35 @@ jobs:
           set -e
           pnpm install --frozen-lockfile || pnpm install
 
-      - name: Build apps/desktop (electron package)
+      - name: Build apps/desktop (x64)
         env:
           CI: true
         run: |
           set -ex
-          # 硬编码桌面包目录
           TAURI_DIR="apps/desktop"
-          # 调用项目内的打包脚本：node scripts/package.mjs -> electron-vite + electron-builder
-          # 使用 --mac --universal 构建 macOS 通用包（根据需要可改为 --mac --x64 或其它）
-          pnpm --dir "$TAURI_DIR" run package -- --mac --universal
-          # 收集生成的 .dmg（把找到的 .dmg 移到统一 output 目录）
-          mkdir -p output/macos
-          find "$TAURI_DIR" -type f -name '*.dmg' -exec mv {} output/macos/ \; || true
-          echo "Artifacts in output/macos:"
-          ls -la output/macos || true
+          ARCH_DIR="output/macos/x64"
+          mkdir -p "$ARCH_DIR"
+          # build x64
+          pnpm --dir "$TAURI_DIR" run package -- --mac --x64
+          # move any produced .dmg into arch-specific output dir
+          find "$TAURI_DIR" -type f -name '*.dmg' -maxdepth 6 -exec mv -f {} "$ARCH_DIR"/ \; || true
+          echo "x64 artifacts:"
+          ls -la "$ARCH_DIR" || true
+
+      - name: Build apps/desktop (arm64)
+        env:
+          CI: true
+        run: |
+          set -ex
+          TAURI_DIR="apps/desktop"
+          ARCH_DIR="output/macos/arm64"
+          mkdir -p "$ARCH_DIR"
+          # build arm64
+          pnpm --dir "$TAURI_DIR" run package -- --mac --arm64
+          # move any produced .dmg into arch-specific output dir
+          find "$TAURI_DIR" -type f -name '*.dmg' -maxdepth 6 -exec mv -f {} "$ARCH_DIR"/ \; || true
+          echo "arm64 artifacts:"
+          ls -la "$ARCH_DIR" || true
 
       - name: Upload For Single Build
         uses: actions/upload-artifact@v4
