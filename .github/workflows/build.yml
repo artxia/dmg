@@ -14,11 +14,11 @@ jobs:
       matrix:
         include:
           - build: macos-universal
-            os: macos-latest
+            os: macos-15
             rust: stable
             tauri_target: universal-apple-darwin
           - build: macos-intel
-            os: macos-latest
+            os: macos-15
             rust: stable
             tauri_target: x86_64-apple-darwin
 
