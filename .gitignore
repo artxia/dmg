@@ -1,0 +1,44 @@
+# Build artifacts
+app/HyperVibe
+app/HyperVibe.app/
+app/HyperVibe.icns
+app/HyperVibe.iconset/
+.build/
+.swiftpm/
+mic/driver/SiriRemoteMic.driver/
+mic/driver/SiriRemoteMicCaptureTest.app/
+mic/driver/srm_capture_test
+mic/driver/srm_test_writer
+mic/driver/srm_usage_monitor
+mic/driver/srm_driver_contract_test
+mic/driver/srm_io_sim
+mic/driver/srm_notify_listener
+mic/captured/srm_captured
+mic/test_decoder
+mic/router/SiriRemoteMicRingWriter.o
+mic/router/srm_router
+mic/router/test_parser
+
+# macOS
+.DS_Store
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+mic/router/MonitorAudioRing.o
+mic/router/test_monitor_ring
+app/BuiltinMicRingWriter.o
+
+# Installer build output. Public builds are sanitized by default; personal mode can still contain a
+# private config and PacketLogger, so generated output remains local-only and is uploaded explicitly
+# only after the release audit passes.
+dist/build/
+
+# Local product-film production files and rendered media.
+# This directory contains narration, animation sources, app artwork, and final exports.
+# It is intentionally local-only and must never be published with the open-source repository.
+video/
