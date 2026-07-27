@@ -1,78 +1,186 @@
-name: Build and Release
+name: Build Intel macOS Release
+
 on:
   push:
     tags:
-      - '*'
+      - "*"
   workflow_dispatch:
     inputs:
+      version:
+        description: "Optional version, without leading v. Example: 0.1.0-beta.1"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: macos-latest
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - build: macos
-            os: macos-latest
-            rust: stable
-            target: x86_64-apple-darwin
+  build-intel:
+    name: Build & Package Intel macOS
+    runs-on: macos-26-intel
+    timeout-minutes: 90
+
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions/checkout@v4
         with:
-          toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.target }}
+          fetch-depth: 0
 
-      - name: Rust cache restore
-        id: cache_store
-        uses: actions/cache/restore@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build for macOS
-        if: matrix.os == 'macos-latest'
+      - name: Resolve version
         run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
-          npm run tauri build -- --target universal-apple-darwin
-          mkdir -p output/macos
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{inputs.title}}".dmg
+          set -euo pipefail
 
-      - name: Rust cache store
-        uses: actions/cache/save@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          INPUT_VERSION="${{ github.event.inputs.version }}"
 
-      - name: Upload For Single Build
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $VERSION"
+            exit 2
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DIST_DIR=dist/build/$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved version: $VERSION"
+
+      - name: Show toolchain
+        run: |
+          set -euo pipefail
+          uname -a
+          uname -m
+          xcodebuild -version
+          swift --version
+
+      - name: Test SiriRemoteCore
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path SiriRemoteCore \
+            --scratch-path "$RUNNER_TEMP/SiriRemoteCore-build"
+
+      - name: Allow Intel release build
+        run: |
+          set -euo pipefail
+
+          # The upstream release script currently refuses non-arm64 builds.
+          # For this workflow we intentionally build on GitHub's Intel macOS runner.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("dist/build-release.sh")
+          text = path.read_text()
+
+          old = '''if [ "$(uname -m)" != "arm64" ]; then
+              echo "REFUSED: the first public binary release is defined as Apple-silicon only" >&2
+              exit 2
+          fi
+          '''
+
+          if old not in text:
+              raise SystemExit("Could not find arm64 release guard in dist/build-release.sh")
+
+          text = text.replace(old, '''echo "Intel release override enabled: $(uname -m)"
+          ''')
+          path.write_text(text)
+          PY
+
+      - name: Build Intel release packages
+        env:
+          HYPERVIBE_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "✗ Expected Intel runner, got: $(uname -m)"
+            exit 1
+          fi
+
+          echo "▸ Building HyperVibe Intel release assets for $VERSION"
+          HYPERVIBE_ALLOW_DIRTY=1 dist/build-release.sh "$VERSION"
+
+          echo "✓ Build complete"
+
+      - name: Rename assets for Intel
+        run: |
+          set -euo pipefail
+
+          cd "$DIST_DIR"
+
+          for file in *.zip; do
+            new_name="$file"
+            new_name="${new_name//macOS-arm64/macOS-intel-x86_64}"
+            new_name="${new_name//arm64/intel-x86_64}"
+
+            if [ "$new_name" != "$file" ]; then
+              mv "$file" "$new_name"
+            fi
+          done
+
+          rm -f SHA256SUMS.txt
+          shasum -a 256 *.zip > SHA256SUMS.txt
+
+          echo "▸ Intel release assets"
+          ls -lh
+          echo
+          cat SHA256SUMS.txt
+
+      - name: Verify Intel binaries
+        run: |
+          set -euo pipefail
+
+          cd "$DIST_DIR"
+
+          APP_ZIP="$(ls HyperVibe-*-macOS-intel-x86_64.zip | head -n 1)"
+          TMP_DIR="$(mktemp -d)"
+
+          unzip -q "$APP_ZIP" -d "$TMP_DIR"
+
+          APP_BIN="$(find "$TMP_DIR" -path "*/HyperVibe.app/Contents/MacOS/HyperVibe" -type f | head -n 1)"
+          if [ -z "$APP_BIN" ]; then
+            echo "✗ HyperVibe app binary not found in $APP_ZIP"
+            exit 1
+          fi
+
+          file "$APP_BIN"
+          lipo -archs "$APP_BIN"
+
+          if ! lipo -archs "$APP_BIN" | grep -q "x86_64"; then
+            echo "✗ HyperVibe binary is not x86_64"
+            exit 1
+          fi
+
+          shasum -a 256 -c SHA256SUMS.txt
+
+          echo "✓ Intel assets verified"
+
+      - name: Upload artifacts (manual workflow run)
         uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/') != true
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
-          path: 'output/*/*.*'
+          name: HyperVibe-${{ env.VERSION }}-macOS-intel-x86_64
+          path: |
+            ${{ env.DIST_DIR }}/*.zip
+            ${{ env.DIST_DIR }}/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Upload For Release
-        # arg info: https://github.com/ncipollo/release-action#release-action
-        uses: ncipollo/release-action@v1
-        if: startsWith(github.ref, 'refs/tags/') == true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          allowUpdates: true
-          artifacts: 'output/*/*.*'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            ${{ env.DIST_DIR }}/*.zip
+            ${{ env.DIST_DIR }}/SHA256SUMS.txt
+          draft: false
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          generate_release_notes: true
