@@ -4,15 +4,201 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [3.1.15]
+## [3.2.1]
 
 ### Summary
-Vorssaint 3.1.15 fixes a rare failure to launch on a Mac whose display was
-still waking up, where the app would show no menu bar icon and quit.
+Vorssaint 3.2.1 lets you see through the Dock preview panel, and fixes mouse
+button shortcuts on the arrows and the F keys and a saved search in the Command
+Bar that disappeared as soon as you typed what to look for.
+
+### Added
+- A slider for how solid the Dock preview panel looks. Under Switcher, with
+  Dock Preview on. Thanks to @ruvelro.
+
+### Changed
+- Supporting Vorssaint now goes through GitHub Sponsors, from the Support page
+  in Settings and from the screen shown after an update. The coffee link is
+  still there for whoever prefers it.
 
 ### Fixed
-- The app could fail to launch on a Mac whose display was still waking up,
-  showing no menu bar icon. It now starts reliably.
+- A mouse button set to a shortcut with an arrow or an F key now presses it
+  everywhere, including the window shortcuts. Thanks to @hash00.
+- A saved search in the Command Bar stays in the list while you type what to
+  look for after its name. Thanks to @tenbux.
+
+## [3.2.0] - 2026-07-31
+
+### Summary
+Vorssaint 3.2.0 adds the Command Bar, one field that finds and runs anything on
+your Mac, plus app updates in one list, a searchable snippet menu, a super key
+on Caps Lock and mouse button shortcuts.
+
+### Added
+- The Command Bar. One shortcut opens a field that finds and runs anything,
+  including the menu commands of the app in front. Under Command Bar, off by
+  default.
+- App updates. One list of the apps with a newer version, ticked the way you
+  want, updated together. Under App updates.
+- A snippet menu. A shortcut opens your snippets in a searchable list and
+  picking one types it at the cursor. Under Text snippets.
+- A super key. Hold Caps Lock and it becomes Shift, Control, Option and
+  Command together, for shortcuts nothing else uses. Under Super key.
+- Mouse button shortcuts. Any extra mouse button can press a key
+  combination for you. Under Mouse.
+- Full Screen joins the window layouts, the same one the green button gives.
+  Under Window layout.
+- Screenshots can copy themselves to the clipboard the moment they are
+  taken. Under Screenshot. Thanks to @kingstyles.
+- Screenshots can run the action you choose right after each capture.
+  Thanks to @403Denied.
+- Screenshot saves can go into dated subfolders and follow a file name
+  pattern you set. Thanks to @403Denied.
+- The radial menu gained slices for the Shelf, Cleaning Mode, Keep Awake
+  and window layouts. Thanks to @ruvelro.
+- You choose how the radial menu opens, by a press or by holding it.
+  Thanks to @ruvelro.
+- The Cleaner can clear the media a messaging app leaves in your downloads,
+  always to the Trash and off by default. An optional organizer files new
+  ones into a folder you pick. Thanks to @ruvelro.
+- The last capture outline in the screenshot selector can be hidden.
+  Thanks to @ruvelro.
+- W closes the highlighted window in the app switcher, leaving the app
+  running.
+- The app switcher can list apps that are running with no window open, the
+  way the system one does. Under Switcher, still set to the Finder alone.
+- Hide apps from the volume mixer with a right click. The same menu brings
+  them back.
+- Each removable drive in the Drives tab now has its own eject button.
+- Snippet triggers can ignore capitalization, and date variables can follow
+  the format you want.
+- Each mouse feature can name apps to leave alone, for apps that use the
+  wheel and the buttons their own way. Under Mouse.
+- The app can stay light or dark on its own, apart from the Mac. Under
+  General.
+
+### Changed
+- Settings groups App updates, Cleaner, Homebrew and Uninstaller under App
+  management.
+- Recording a shortcut keeps the keys to itself instead of triggering the
+  app or the system.
+- "Open the editor right after capturing" became the Edit after-capture
+  action, and existing setups keep working unchanged.
+- The scratchpad now closes when you click outside it. A toggle under Quick
+  tools keeps it floating instead.
+- The app switcher now closes when you click outside it.
+
+### Fixed
+- Eject all disks now finds every external drive, not only the ones with
+  media that comes out, like a memory card. On most Macs it used to say no
+  external disk was ready.
+- The app switcher now lists windows in the order you really used them. It
+  follows the windows you pick with the mouse, and windows of the same app.
+- The hot CPU alert no longer fires on a momentary spike. The temperature
+  now has to stay above the limit for a few seconds.
+- Quit on close no longer leaves apps running after their last window is
+  closed, including apps that hide the window instead of closing it.
+- The red dot in the panel is gone. It marked the Cleaner as new since an
+  older version and could stay on screen for good.
+- Showing the menu bar icon again waits for macOS to place it before
+  reporting a problem.
+- Brightness keys step from where the monitor actually is. After a pause the
+  monitor is asked first, so a screen at 80% no longer drops to one step.
+- Brightness keys and sliders reach an external monitor again after the Mac
+  has slept. The connection is looked up fresh on waking.
+- Copy text from screen works again. The area is now picked with the app's
+  own selector, the same one screenshots use.
+- Muting the microphone now cuts every microphone, not only the one macOS
+  is set to. An app pointed at a headset of its own goes quiet too.
+- The app pickers list every app again, including the ones macOS keeps
+  outside the applications folder.
+- The App Switcher and Dock previews now show windows from other desktops
+  too, and an option keeps everything to the current one.
+- Q in the app switcher quits from the Q on your keyboard, on layouts that
+  put the letter somewhere else.
+- Undo works in the screenshot editor, and clicking an annotation selects
+  it instead of drawing on top. Thanks to @ruvelro.
+- The Homebrew settings page no longer breaks in narrow windows.
+  Thanks to @ruvelro.
+- Opening the Cleaner page no longer blanks the Settings sidebar on the
+  newest macOS, and its tool switcher shows again.
+- Restoring the panel's quick controls also brings back a hidden Text
+  snippets toggle.
+- Boosting an app's volume above 100% no longer crackles at loud moments.
+- The green button and window layout tools now resize slow browsers
+  properly instead of leaving them small or misplaced.
+- Volume levels for some games and tools were not saved since 3.1.15. They
+  are saved again and old ones come back.
+- The mixer repairs its audio path by itself after the Mac wakes, instead
+  of leaving an adjusted app silent.
+- An app you turned down no longer plays slowed down, or falls silent, on
+  earbuds during a call and on some other outputs. Thanks to @danilo-alm.
+- Paste as plain text no longer leaves the pasted style on what you type
+  next in some rich text apps.
+- Shelf items now follow their files across moves and renames. Only a file
+  that is really gone steps aside, with a note instead of a drag nothing
+  accepts.
+- The Drives tab no longer shows a drive's format and location twice.
+- External monitors no longer go dark while adjusting brightness, and a
+  reconnected screen always comes back visible.
+- Minimizing several windows from the Dock icon animates them together
+  again, and restoring them ends with the right window on top and
+  focused. Thanks to @Zvzdov.
+- Monitor blocks in the menu bar sit centered again on macOS 26 and
+  earlier. Thanks to @wzxu.
+
+## [3.1.15] - 2026-07-21
+
+### Summary
+Vorssaint 3.1.15 fixes starts that could leave the app with no menu bar icon
+or quit it right away, freezes where the app stopped responding, a crash
+while choosing a screenshot area, and an external display that could go dark
+and stay dark. It also gives back the clicks that moving windows by dragging
+was taking from other apps, repairs smooth scrolling, the brightness keys and
+the shortcut recorder, and brings the window switcher back on the first
+press.
+
+### Fixed
+- Moving and resizing windows by dragging no longer takes the modifier click
+  away from other apps. A click that does not move now goes to the app as
+  usual, and the window only follows the pointer once you actually drag.
+- The window switcher opens on the first press again after you close every
+  window of an app or move to another desktop. With nothing left to switch to,
+  the shortcut now stays quiet instead of falling back to the system switcher.
+- Smooth scrolling moves the right distance on mice that report the wheel
+  continuously, and the speed setting now works on them.
+- Smooth scrolling no longer reverses the scroll direction on its own.
+  Inverting the direction works alongside it, and so does Shift to scroll
+  sideways.
+- The app could start with no menu bar icon and quit a few seconds later.
+  It now starts reliably, including on a Mac whose display was still waking
+  up.
+- The app could quit at startup right after an update, while the tour of the
+  new features was opening. The tour now keeps the same size on every page.
+- The app could stop responding for a while at a time, often right when
+  headphones or another audio device connected. It no longer waits on the
+  audio system, on other apps that are busy, or on commands that never
+  answer, and it stops watching audio properly when the mixer or the mic
+  mute is switched off instead of leaving watchers behind.
+- An external display could go dark while its brightness was adjusted and
+  stay dark until it was unplugged. It recovers now, and a screen switched
+  off here comes back at the next start.
+- Choosing a screenshot area no longer quits the app when the drag ends with
+  more than one finger leaving the trackpad. Cancelling with Escape is safe
+  too. Thanks to @lei1024.
+- Window Switcher previews show the whole window. A window pushed over the
+  edge of the screen used to appear as a thin strip.
+- Brightness keys follow the pointer on keyboards other than the built-in
+  one, including with the lid closed.
+- Per-app volume no longer jumps loud or quiet when an app changes what it
+  is playing. Quitting or switching the mixer off puts back the input
+  device and the volume it changed.
+- The panel stays under its icon when the menu bar is set to hide itself.
+  Switching tabs no longer moves it to the edge of the screen.
+- Recording a shortcut captures it instead of running it. Delete clears the
+  shortcut, more keys can be recorded, and the field no longer overlaps the
+  text beside it while it listens.
+- The radial menu settings now say whether the app can see the mouse button
+  you picked, so a button the mouse itself has taken over is obvious.
 
 ## [3.1.14] - 2026-07-18
 

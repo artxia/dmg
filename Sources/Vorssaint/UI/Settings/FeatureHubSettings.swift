@@ -341,6 +341,13 @@ private struct PermissionsPortalSections: View {
         case .accessibility: return permissions.accessibility ? .granted : .missing
         case .screenRecording: return permissions.screenRecording ? .granted : .missing
         case .fullDiskAccess: return permissions.fullDiskAccess ? .granted : .missing
+        case .filesAndFolders:
+            guard AppFeature.cleaner.isAvailable else { return .unknown }
+            switch WhatsAppDownloadManager.shared.accessStatus {
+            case .available: return .granted
+            case .denied: return .missing
+            case .unknown: return .unknown
+            }
         case .notifications:
             switch permissions.notifications {
             case .granted: return .granted
@@ -471,7 +478,7 @@ private struct PermissionPortalRow: View {
         case .accessibility, .screenRecording, .fullDiskAccess: return true
         case .notifications: return Permissions.shared.notifications == .undetermined
         case .camera: return Permissions.shared.camera == .undetermined
-        case .automationFinder, .automationTerminal, .audioCapture: return false
+        case .filesAndFolders, .automationFinder, .automationTerminal, .audioCapture: return false
         }
     }
 
@@ -486,7 +493,7 @@ private struct PermissionPortalRow: View {
                 Permissions.shared.refresh()
             }
         case .camera: Permissions.shared.requestCamera()
-        case .automationFinder, .automationTerminal, .audioCapture:
+        case .filesAndFolders, .automationFinder, .automationTerminal, .audioCapture:
             break
         }
     }
@@ -496,6 +503,7 @@ private struct PermissionPortalRow: View {
         case .accessibility: Permissions.shared.openAccessibilitySettings()
         case .screenRecording: Permissions.shared.openScreenRecordingSettings()
         case .fullDiskAccess: Permissions.shared.openFullDiskAccessSettings()
+        case .filesAndFolders: Permissions.shared.openFilesAndFoldersSettings()
         case .notifications: Permissions.shared.openNotificationSettings()
         case .automationFinder, .automationTerminal: Permissions.shared.openAutomationSettings()
         case .audioCapture: Permissions.shared.openAudioCaptureSettings()
@@ -520,9 +528,11 @@ extension AppFeature {
         case .scrollInverter: return s.invertMouseScroll
         case .smoothScroll: return s.smoothScrollName
         case .mouseNavigation: return hub.titleMouseNavigation
+        case .mouseButtonShortcuts: return FeatureStrings.mouseButtons(L10n.shared.language).pageTitle
         case .middleClick: return s.middleClickSection
         case .keyboardDebounce: return s.keyDebounceName
         case .textSnippets: return FeatureStrings.snippets(L10n.shared.language).pageTitle
+        case .superKey: return FeatureStrings.superKey(L10n.shared.language).pageTitle
         case .clipboardHistory: return FeatureStrings.clipboard(L10n.shared.language).title
         case .pastePlain: return s.pastePlainName
         case .finderCutPaste: return s.cutPasteName
@@ -543,11 +553,13 @@ extension AppFeature {
         case .cameraPreview: return FeatureStrings.cameraPreview(L10n.shared.language).pageTitle
         case .radialMenu: return FeatureStrings.radialMenu(L10n.shared.language).pageTitle
         case .scratchpad: return FeatureStrings.scratchpad(L10n.shared.language).pageTitle
+        case .commandBar: return FeatureStrings.commandBar(L10n.shared.language).pageTitle
         case .cleaningMode: return s.cleaningMenuItem
         case .mediaTools: return s.mediaName
         case .cleaner: return s.cleanerName
         case .uninstaller: return s.uninstallerName
         case .homebrew: return s.homebrewName
+        case .appUpdates: return FeatureStrings.appUpdates(L10n.shared.language).pageTitle
         case .monitorCPU: return s.monitorShowCPU
         case .monitorGPU: return s.monitorShowGPU
         case .monitorMemory: return s.monitorShowMemory
@@ -568,9 +580,11 @@ extension AppFeature {
         case .scrollInverter: return hub.descScrollInverter
         case .smoothScroll: return hub.descSmoothScroll
         case .mouseNavigation: return hub.descMouseNavigation
+        case .mouseButtonShortcuts: return FeatureStrings.mouseButtons(L10n.shared.language).hubDescription
         case .middleClick: return hub.descMiddleClick
         case .keyboardDebounce: return hub.descKeyboardDebounce
         case .textSnippets: return FeatureStrings.snippets(L10n.shared.language).hubDescription
+        case .superKey: return FeatureStrings.superKey(L10n.shared.language).hubDescription
         case .clipboardHistory: return hub.descClipboardHistory
         case .pastePlain: return hub.descPastePlain
         case .finderCutPaste: return hub.descFinderCutPaste
@@ -591,11 +605,15 @@ extension AppFeature {
         case .cameraPreview: return FeatureStrings.cameraPreview(L10n.shared.language).hubDescription
         case .radialMenu: return FeatureStrings.radialMenu(L10n.shared.language).hubDescription
         case .scratchpad: return FeatureStrings.scratchpad(L10n.shared.language).hubDescription
+        case .commandBar: return FeatureStrings.commandBar(L10n.shared.language).hubDescription
         case .cleaningMode: return hub.descCleaningMode
         case .mediaTools: return hub.descMediaTools
-        case .cleaner: return hub.descCleaner
+        case .cleaner:
+            return hub.descCleaner + " · "
+                + FeatureStrings.whatsAppDownloads(L10n.shared.language).hubDescription
         case .uninstaller: return hub.descUninstaller
         case .homebrew: return hub.descHomebrew
+        case .appUpdates: return FeatureStrings.appUpdates(L10n.shared.language).hubDescription
         case .monitorCPU: return hub.descMonitorCPU
         case .monitorGPU: return hub.descMonitorGPU
         case .monitorMemory: return hub.descMonitorMemory
@@ -612,6 +630,7 @@ extension AppPermission {
         case .accessibility: return hub.permAccessibility
         case .screenRecording: return hub.permScreenRecording
         case .fullDiskAccess: return hub.permFullDisk
+        case .filesAndFolders: return hub.permFilesAndFolders
         case .notifications: return hub.permNotifications
         case .automationFinder: return hub.permAutomationFinder
         case .automationTerminal: return hub.permAutomationTerminal
@@ -625,6 +644,7 @@ extension AppPermission {
         case .accessibility: return hub.explainAccessibility
         case .screenRecording: return hub.explainScreenRecording
         case .fullDiskAccess: return hub.explainFullDisk
+        case .filesAndFolders: return hub.explainFilesAndFolders
         case .notifications: return hub.explainNotifications
         case .automationFinder: return hub.explainAutomationFinder
         case .automationTerminal: return hub.explainAutomationTerminal

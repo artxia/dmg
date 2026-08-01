@@ -15,6 +15,20 @@ struct UpdateHighlightsView: View {
     private var s: Strings { l10n.s }
     private var hub: FeatureHubStrings { FeatureStrings.hub(l10n.language) }
 
+    /// The window is sized by the view, so both axes are declared here and
+    /// nothing about the content is allowed to move them: a window whose size
+    /// keeps being recomputed while it is on screen makes the layout engine
+    /// fight whoever placed it. The numbers come from measuring the tallest
+    /// page in all thirteen languages.
+    private enum Layout {
+        static let width: CGFloat = 600
+        static let pageHeight: CGFloat = 406
+        static let height: CGFloat = 541
+        /// Captions get two lines everywhere; the reserved page height is
+        /// built for exactly that.
+        static let captionLines = 2
+    }
+
     private struct Highlight: Identifiable {
         let id: String
         let symbol: String
@@ -25,54 +39,59 @@ struct UpdateHighlightsView: View {
         let action: () -> Void
     }
 
-    /// The curated pages for the pinned release. Features the user
+    /// The curated pages for the pinned release: only what this version
+    /// introduced. A feature that merely got better is read as new by anyone
+    /// who already had it, so improvements stay in the release notes and the
+    /// tour keeps meaning "this was not here before". Features the user
     /// uninstalled in the hub stay out; their Settings pages are gone too.
     private var highlights: [Highlight] {
         var pages: [Highlight] = []
-        if AppFeature.radialMenu.isAvailable {
+        // First, because it is the one page that shows what the whole app can
+        // do rather than one more thing it can do.
+        if AppFeature.commandBar.isAvailable {
             pages.append(Highlight(
-                id: "radial", symbol: AppFeature.radialMenu.symbolName,
-                imageName: "highlights-radial",
-                title: AppFeature.radialMenu.hubTitle(s, hub: hub),
-                caption: AppFeature.radialMenu.hubDescription(hub),
+                id: "commandbar", symbol: AppFeature.commandBar.symbolName,
+                imageName: "commandBar",
+                title: FeatureStrings.commandBar(l10n.language).pageTitle,
+                caption: FeatureStrings.commandBar(l10n.language).hubDescription,
                 actionLabel: s.highlightsConfigure,
-                action: { openSettings(.radialMenu) }))
+                action: { openSettings(.commandBar) }))
         }
-        if AppFeature.cameraPreview.isAvailable {
+        if AppFeature.appUpdates.isAvailable {
             pages.append(Highlight(
-                id: "camera", symbol: AppFeature.cameraPreview.symbolName,
-                imageName: "highlights-camera",
-                title: AppFeature.cameraPreview.hubTitle(s, hub: hub),
-                caption: AppFeature.cameraPreview.hubDescription(hub),
-                actionLabel: s.highlightsTry,
-                action: { CameraPreviewService.shared.show() }))
-        }
-        if AppFeature.scratchpad.isAvailable {
-            pages.append(Highlight(
-                id: "scratchpad", symbol: AppFeature.scratchpad.symbolName,
-                imageName: "highlights-scratchpad",
-                title: AppFeature.scratchpad.hubTitle(s, hub: hub),
-                caption: AppFeature.scratchpad.hubDescription(hub),
-                actionLabel: s.highlightsTry,
-                action: { ScratchpadService.shared.show() }))
-        }
-        if AppFeature.dockPreview.isAvailable {
-            pages.append(Highlight(
-                id: "dock", symbol: AppFeature.dockPreview.symbolName,
-                imageName: "highlights-dock",
-                title: AppFeature.dockPreview.hubTitle(s, hub: hub),
-                caption: s.highlightsCaptionDockPreview,
+                id: "appupdates", symbol: AppFeature.appUpdates.symbolName,
+                imageName: "highlights-appupdates",
+                title: FeatureStrings.appUpdates(l10n.language).pageTitle,
+                caption: FeatureStrings.appUpdates(l10n.language).hubDescription,
                 actionLabel: s.highlightsConfigure,
-                action: { openSettings(.switcher) }))
+                action: { openSettings(.appUpdates) }))
         }
-        if AppFeature.screenshot.isAvailable {
+        if AppFeature.textSnippets.isAvailable {
             pages.append(Highlight(
-                id: "screenshot", symbol: AppFeature.screenshot.symbolName,
-                imageName: "highlights-loupe",
-                title: AppFeature.screenshot.hubTitle(s, hub: hub),
-                caption: s.highlightsCaptionScreenshot,
+                id: "snippetlibrary", symbol: AppFeature.textSnippets.symbolName,
+                imageName: "highlights-snippetlibrary",
+                title: FeatureStrings.snippets(l10n.language).libraryTitle,
+                caption: s.highlightsCaptionSnippetLibrary,
                 actionLabel: s.highlightsConfigure,
-                action: { openSettings(.screenshot) }))
+                action: { openSettings(.textSnippets) }))
+        }
+        if AppFeature.mouseButtonShortcuts.isAvailable {
+            pages.append(Highlight(
+                id: "mousebuttons", symbol: AppFeature.mouseButtonShortcuts.symbolName,
+                imageName: "highlights-mousebuttons",
+                title: AppFeature.mouseButtonShortcuts.hubTitle(s, hub: hub),
+                caption: AppFeature.mouseButtonShortcuts.hubDescription(hub),
+                actionLabel: s.highlightsConfigure,
+                action: { openSettings(.mouse) }))
+        }
+        if AppFeature.superKey.isAvailable {
+            pages.append(Highlight(
+                id: "superkey", symbol: AppFeature.superKey.symbolName,
+                imageName: "highlights-superkey",
+                title: AppFeature.superKey.hubTitle(s, hub: hub),
+                caption: AppFeature.superKey.hubDescription(hub),
+                actionLabel: s.highlightsConfigure,
+                action: { openSettings(.superKey) }))
         }
         return pages
     }
@@ -91,12 +110,18 @@ struct UpdateHighlightsView: View {
             .padding(.top, 24)
             .padding(.bottom, 16)
 
-            if pages.indices.contains(clamped) {
-                page(pages[clamped])
-                    .id(pages[clamped].id)
-                    .transition(.opacity)
-                    .animation(.easeInOut(duration: 0.18), value: clamped)
+            // The page area keeps the same height on every page and in every
+            // language, so turning a page fades the content instead of
+            // resizing the window under it.
+            ZStack {
+                if pages.indices.contains(clamped) {
+                    page(pages[clamped])
+                        .id(pages[clamped].id)
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.18), value: clamped)
+                }
             }
+            .frame(height: Layout.pageHeight)
 
             ZStack {
                 // The side buttons have different widths, so the dots sit in
@@ -137,13 +162,18 @@ struct UpdateHighlightsView: View {
             .padding(.top, 16)
             .padding(.bottom, 20)
         }
-        .frame(width: 600)
+        .frame(width: Layout.width, height: Layout.height)
     }
 
     private func page(_ highlight: Highlight) -> some View {
         VStack(spacing: 14) {
             Group {
-                if let image = Self.asset(highlight.imageName) {
+                if let gif = Self.animatedAsset(highlight.imageName) {
+                    // A still cannot show a bar being typed into; this page
+                    // only makes sense moving.
+                    AnimatedGIFView(image: gif)
+                        .aspectRatio(gif.size, contentMode: .fit)
+                } else if let image = Self.asset(highlight.imageName) {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
@@ -180,6 +210,7 @@ struct UpdateHighlightsView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .lineLimit(Layout.captionLines)
                     .frame(maxWidth: 440)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -196,8 +227,23 @@ struct UpdateHighlightsView: View {
     /// At least one featured item survives in the hub, so the tour has a
     /// page to show. The gate reads this before opening the window.
     static var hasContent: Bool {
-        [AppFeature.radialMenu, .cameraPreview, .scratchpad, .dockPreview, .screenshot]
+        [AppFeature.commandBar, .appUpdates, .mouseButtonShortcuts, .textSnippets, .superKey]
             .contains { $0.isAvailable }
+    }
+
+    /// Decoded once and kept. A fresh image on every pass would be read from
+    /// disk again and, being a different object, would restart the animation
+    /// from the first frame every time the page is laid out.
+    private static var animatedAssets: [String: NSImage] = [:]
+
+    private static func animatedAsset(_ name: String) -> NSImage? {
+        if let cached = animatedAssets[name] { return cached }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "gif",
+                                        subdirectory: "Gifs"),
+              let image = NSImage(contentsOf: url)
+        else { return nil }
+        animatedAssets[name] = image
+        return image
     }
 
     private static func asset(_ name: String) -> NSImage? {
