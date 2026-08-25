@@ -12,6 +12,7 @@ final class MonitorAlertService {
     private var cancellables = Set<AnyCancellable>()
     private var cpuUsageGate = SustainedAlertGate()
     private var cpuTemperatureGate = SustainedAlertGate()
+    private var batteryTemperatureGate = SustainedAlertGate()
     private var lastSent: [MonitorAlertKind: Date] = [:]
 
     private init() {}
@@ -34,7 +35,10 @@ final class MonitorAlertService {
 
     static func anyEnabled(in defaults: UserDefaults) -> Bool {
         AppFeature.anyMonitorAlertEnabled(
-            isAvailable: { defaults.bool(forKey: $0.availabilityKey) },
+            isAvailable: {
+                defaults.bool(forKey: $0.availabilityKey)
+                    && ($0 != .monitorPower || PowerSampler.hasInternalBattery)
+            },
             boolFor: { defaults.bool(forKey: $0) }
         )
     }
@@ -53,6 +57,7 @@ final class MonitorAlertService {
         cancellables.removeAll()
         cpuUsageGate.reset()
         cpuTemperatureGate.reset()
+        batteryTemperatureGate.reset()
     }
 
     private func evaluate(_ snapshot: SystemSnapshot) {
@@ -60,12 +65,15 @@ final class MonitorAlertService {
         guard Self.anyEnabled(in: defaults) else {
             cpuUsageGate.reset()
             cpuTemperatureGate.reset()
+            batteryTemperatureGate.reset()
             return
         }
         let strings = FeatureStrings.monitorAlerts(L10n.shared.language)
 
         func alertOn(_ key: String, _ feature: AppFeature) -> Bool {
-            defaults.bool(forKey: key) && defaults.bool(forKey: feature.availabilityKey)
+            defaults.bool(forKey: key)
+                && defaults.bool(forKey: feature.availabilityKey)
+                && (feature != .monitorPower || PowerSampler.hasInternalBattery)
         }
 
         if alertOn(DefaultsKey.monitorAlertCPU, .monitorCPU) {
@@ -78,6 +86,12 @@ final class MonitorAlertService {
             evaluateCPUTemperature(snapshot, defaults: defaults, strings: strings)
         } else {
             cpuTemperatureGate.reset()
+        }
+
+        if alertOn(DefaultsKey.monitorAlertBatteryTemperature, .monitorPower) {
+            evaluateBatteryTemperature(snapshot, defaults: defaults, strings: strings)
+        } else {
+            batteryTemperatureGate.reset()
         }
 
         if alertOn(DefaultsKey.monitorAlertMemory, .monitorMemory),
@@ -153,6 +167,24 @@ final class MonitorAlertService {
         return charge
     }
 
+    private func evaluateBatteryTemperature(_ snapshot: SystemSnapshot,
+                                            defaults: UserDefaults,
+                                            strings: MonitorAlertFeatureStrings) {
+        let threshold = Defaults.sanitizedPercent(
+            defaults.integer(forKey: DefaultsKey.monitorAlertBatteryTemperatureThreshold),
+            fallback: 40,
+            range: 30...50
+        )
+        guard batteryTemperatureGate.shouldAlert(reading: snapshot.batteryTemperature,
+                                                 threshold: Double(threshold),
+                                                 readAt: snapshot.batteryTemperatureReadAt),
+              let temperature = snapshot.batteryTemperature else { return }
+        send(.batteryTemperature,
+             title: strings.batteryTemperatureTitle,
+             body: String(format: strings.batteryTemperatureBodyFormat,
+                          Int(temperature.rounded())))
+    }
+
     private func send(_ kind: MonitorAlertKind, title: String, body: String) {
         let now = Date()
         let minutes = Defaults.sanitizedMonitorAlertCooldown(
@@ -167,5 +199,5 @@ final class MonitorAlertService {
 }
 
 private enum MonitorAlertKind: Hashable {
-    case cpu, cpuTemperature, memory, disk, battery
+    case cpu, cpuTemperature, memory, disk, battery, batteryTemperature
 }
