@@ -7,69 +7,58 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: macos-latest
-    runs-on: macos-latest
+  build-macos-intel:
+    name: Build macOS (Intel)
+    runs-on: macos-26
+    env:
+      CI: "true"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
+      - name: Make build scripts executable
+        run: |
+          chmod +x ./run-self-tests.sh || true
+          chmod +x ./package-app.sh || true
+          chmod +x ./build-dmg.sh || true
+          chmod +x ./build-pkg.sh || true
 
-      - name: Cache Cargo
+      - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            .build
+            .swiftpm
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Package.resolved') }}
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Install npm deps
-        run: npm ci
-
-      - name: Add macOS Rust targets
+      - name: Show system info (debug)
         run: |
-          rustup target add aarch64-apple-darwin || true
-          rustup target add x86_64-apple-darwin || true
+          sw_vers
+          xcodebuild -version || true
+          swift --version
 
-      - name: Build for macOS (Tauri universal)
-        env:
-          CI: true
+      - name: Run self-tests
+        run: zsh ./run-self-tests.sh
+
+      - name: Build DMG (calls package-app.sh)
+        run: zsh ./build-dmg.sh
+
+      - name: Show built artifacts
         run: |
-          # If you want to force building universal, the tauri bundler will build both targets
-          npm run tauri build -- --target universal-apple-darwin
-
-          # collect the produced DMG into a stable output folder named with the ref (tag or branch)
-          mkdir -p output/macos
-          if [ -d "src-tauri/target/universal-apple-darwin/release/bundle/dmg" ]; then
-            mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{ github.ref_name }}".dmg || true
-          else
-            echo "No DMG found at expected path; listing src-tauri/target:"
-            ls -la src-tauri/target || true
-            exit 1
-          fi
+          ls -la dist || true
+          ls -la dist/*.dmg || true
 
       - name: Upload artifact (non-tag runs)
         if: startsWith(github.ref, 'refs/tags/') == false
         uses: actions/upload-artifact@v4
         with:
-          name: dmg
-          path: output/*/*.*
+          name: vremoter-dmg
+          path: dist/*.dmg
 
       - name: Create or update GitHub Release (tag runs)
         if: startsWith(github.ref, 'refs/tags/') == true
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
-          artifacts: 'output/*/*.*'
+          artifacts: 'dist/*.dmg'
           token: ${{ secrets.GITHUB_TOKEN }}
