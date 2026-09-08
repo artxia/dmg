@@ -1,77 +1,74 @@
 name: Build and Release
+
 on:
   push:
     tags:
       - '*'
   workflow_dispatch:
-    inputs:
 
 jobs:
   build:
     name: macos-latest
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - build: macos
-            os: macos-latest
-            rust: stable
-            target: x86_64-apple-darwin
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.target }}
+          toolchain: stable
 
-      - name: Rust cache restore
-        id: cache_store
-        uses: actions/cache/restore@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install dependencies
+      - name: Install npm deps
         run: npm ci
 
-      - name: Build for macOS
-        if: matrix.os == 'macos-latest'
+      - name: Add macOS Rust targets
         run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin || true
+          rustup target add x86_64-apple-darwin || true
+
+      - name: Build for macOS (Tauri universal)
+        env:
+          CI: true
+        run: |
+          # If you want to force building universal, the tauri bundler will build both targets
           npm run tauri build -- --target universal-apple-darwin
+
+          # collect the produced DMG into a stable output folder named with the ref (tag or branch)
           mkdir -p output/macos
-          mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{inputs.title}}".dmg
+          if [ -d "src-tauri/target/universal-apple-darwin/release/bundle/dmg" ]; then
+            mv src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg output/macos/"${{ github.ref_name }}".dmg || true
+          else
+            echo "No DMG found at expected path; listing src-tauri/target:"
+            ls -la src-tauri/target || true
+            exit 1
+          fi
 
-      - name: Rust cache store
-        uses: actions/cache/save@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Upload For Single Build
+      - name: Upload artifact (non-tag runs)
+        if: startsWith(github.ref, 'refs/tags/') == false
         uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/') != true
         with:
-          path: 'output/*/*.*'
+          name: dmg
+          path: output/*/*.*
 
-      - name: Upload For Release
-        # arg info: https://github.com/ncipollo/release-action#release-action
-        uses: ncipollo/release-action@v1
+      - name: Create or update GitHub Release (tag runs)
         if: startsWith(github.ref, 'refs/tags/') == true
+        uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           artifacts: 'output/*/*.*'
